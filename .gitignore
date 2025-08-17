@@ -1,0 +1,33 @@
+# Exclude step_output directory and generated files
+step_output/
+
+# Exclude audio files
+*.wav
+
+# Exclude video files  
+*.mp4
+
+# Exclude temporary files
+*.o
+*.tmp
+temp/
+
+# Exclude macOS files
+.DS_Store
+
+# Exclude other generated content
+frame_*.ppm
+nft_output/
+batch_output/
+test_output/
+
+# Build artifacts
+generate_frames
+segment
+src/c/bin/
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+*~

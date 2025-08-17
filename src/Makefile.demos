@@ -1,0 +1,75 @@
+# Visual ASM Demo Makefile
+# Builds demos using the 3 completed ASM visual components
+
+CC = clang
+CFLAGS = -Wall -Wextra -O2 -I include
+ASM_VISUAL_DIR = asm/visual
+
+# ASM object files for the 3 completed components
+ASM_OBJS = $(ASM_VISUAL_DIR)/visual_core.o $(ASM_VISUAL_DIR)/drawing.o asm/visual/ascii_renderer.o
+
+# Demo targets
+DEMOS = demo_color_wheel demo_drawing demo_ascii_art demo_combined
+
+.PHONY: all clean demos
+
+all: demos
+
+demos: $(DEMOS)
+
+# Build ASM objects if they don't exist
+$(ASM_VISUAL_DIR)/%.o: $(ASM_VISUAL_DIR)/%.s
+	@echo "Assembling $<..."
+	$(CC) -c $< -o $@
+
+# Demo executables
+demo_color_wheel: demo_color_wheel.c $(ASM_OBJS) 
+	@echo "Building color wheel demo..."
+	$(CC) $(CFLAGS) -o $@ $< $(ASM_OBJS) -lm
+
+demo_drawing: demo_drawing.c $(ASM_OBJS)
+	@echo "Building drawing demo..." 
+	$(CC) $(CFLAGS) -o $@ $< $(ASM_OBJS) -lm
+
+demo_ascii_art: demo_ascii_art.c $(ASM_OBJS)
+	@echo "Building ASCII art demo..."
+	$(CC) $(CFLAGS) -o $@ $< $(ASM_OBJS) -lm
+
+demo_combined: demo_combined.c $(ASM_OBJS)
+	@echo "Building combined showcase demo..."
+	$(CC) $(CFLAGS) -o $@ $< $(ASM_OBJS) -lm
+
+# Convenience target to run all demos
+run_demos: $(DEMOS)
+	@echo "🎨 Running all visual demos..."
+	@echo "==============================="
+	./demo_color_wheel
+	@echo ""
+	./demo_drawing  
+	@echo ""
+	./demo_ascii_art
+	@echo ""
+	./demo_combined
+	@echo ""
+	@echo "✅ All demos complete! Check the generated .ppm files."
+
+clean:
+	rm -f $(DEMOS) *.ppm
+
+clean_all: clean
+	rm -f $(ASM_OBJS)
+
+help:
+	@echo "Visual ASM Demo Build System"
+	@echo "============================"
+	@echo "Targets:"
+	@echo "  demos       - Build all demo programs"
+	@echo "  run_demos   - Build and run all demos" 
+	@echo "  clean       - Remove demo executables and .ppm files"
+	@echo "  clean_all   - Also remove ASM object files"
+	@echo ""
+	@echo "Individual demos:"
+	@echo "  demo_color_wheel  - HSV color wheel using visual_core.s"
+	@echo "  demo_drawing      - Drawing primitives using drawing.s" 
+	@echo "  demo_ascii_art    - ASCII rendering using ascii_renderer.s"
+	@echo "  demo_combined     - Showcase of all 3 ASM components"
