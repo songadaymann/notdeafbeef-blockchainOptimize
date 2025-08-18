@@ -1,0 +1,370 @@
+[CHUNK 2 OF 2]
+BUNDLE_1_GENERATOR - PART 2
+Concatenate all chunks in order to reconstruct.
+
+ 16 case
+	cmp w2, #16
+	b.eq .Lrot_neon16
+	
+	// Fallback for other sizes: scalar implementation
+	b .Lrot_scalar
+	
+.Lrot_neon16:
+	// NEON optimization for 16-byte patterns (STEPS_PER_BAR)
+	// Load entire 16-byte pattern into single NEON register
+	ld1 {v0.16b}, [x0]
+	
+	// Build rotation index table: [rot, rot+1, rot+2, ..., rot+15] % 16
+	and w3, w3, #15          // Ensure rot is 0-15 (rot % 16)
+	
+	// Build index table on stack
+	sub sp, sp, #16          // Allocate 16 bytes on stack
+	mov w4, wzr              // w4 = loop counter
+	
+.Lrot_build_indices:
+	add w5, w4, w3           // w5 = i + rot
+	and w5, w5, #15          // w5 = (i + rot) % 16
+	strb w5, [sp, w4, uxtw]  // Store index to stack
+	add w4, w4, #1           // i++
+	cmp w4, #16
+	b.lt .Lrot_build_indices
+	
+	// Load index table and use TBL for rotation
+	ld1 {v2.16b}, [sp]       // Load index table
+	tbl v1.16b, {v0.16b}, v2.16b  // Perform table lookup rotation
+	
+	// Store rotated pattern back and clean up stack
+	st1 {v1.16b}, [x0]
+	add sp, sp, #16          // Restore stack
+	
+	b .Lrot_done
+	
+.Lrot_scalar:
+	// Scalar fallback for arbitrary sizes
+	// Copy pattern to tmp buffer
+	mov w4, wzr              // w4 = loop counter for memcpy
+	
+.Lrot_copy_loop:
+	cmp w4, w2
+	b.ge .Lrot_rotate_start
+	ldrb w5, [x0, w4, uxtw]  // Load pattern[i]
+	strb w5, [x1, w4, uxtw]  // Store to tmp[i]
+	add w4, w4, #1
+	b .Lrot_copy_loop
+	
+.Lrot_rotate_start:
+	// Rotate: pattern[i] = tmp[(i+rot) % size]
+	mov w4, wzr              // w4 = i (loop counter)
+	
+.Lrot_rotate_loop:
+	cmp w4, w2
+	b.ge .Lrot_done
+	
+	// Calculate src_index = (i + rot) % size
+	add w5, w4, w3           // w5 = i + rot
+	udiv w6, w5, w2          // w6 = (i + rot) / size
+	msub w5, w6, w2, w5      // w5 = (i + rot) - (w6 * size) = (i + rot) % size
+	
+	// pattern[i] = tmp[src_index]
+	ldrb w6, [x1, w5, uxtw]  // Load tmp[src_index]
+	strb w6, [x0, w4, uxtw]  // Store to pattern[i]
+	
+	add w4, w4, #1           // i++
+	b .Lrot_rotate_loop
+	
+.Lrot_done:
+	ret 
+
+/*
+ * generator_build_events_asm - Pre-compute entire event queue in assembly
+ * ----------------------------------------------------------------------
+ * void generator_build_events_asm(event_queue_t *q, rng_t *rng, 
+ *                                  const uint8_t *kick_pat, const uint8_t *snare_pat, const uint8_t *hat_pat,
+ *                                  uint32_t step_samples);
+ *
+ * Converts the event queue building loop from C to assembly for ultimate performance.
+ * This is the final orchestration step - building the complete musical timeline.
+ *
+ * Event generation rules:
+ * - Drums: kick/snare/hat based on euclidean patterns
+ * - Melody: triggers at specific bar positions (0, 8, 16, 24) 
+ * - Mid: stochastic triggers with 10% probability on certain beats
+ * - Bass: triggers at beginning of each bar (step 0)
+ *
+ * Constants:
+ * - TOTAL_STEPS = 32, STEPS_PER_BAR = 16
+ * - Event types: KICK=0, SNARE=1, HAT=2, MELODY=3, MID=4, FM_BASS=5
+ */
+
+	.globl _generator_build_events_asm
+
+_generator_build_events_asm:
+	// Arguments: x0=q, x1=rng, x2=kick_pat, x3=snare_pat, x4=hat_pat, w5=step_samples
+	
+	// Save callee-saved registers
+	stp x19, x20, [sp, #-80]!
+	stp x21, x22, [sp, #16]
+	stp x23, x24, [sp, #32]
+	stp x25, x26, [sp, #48]
+	stp x27, x28, [sp, #64]
+	
+	// Initialize event queue: q->count = 0
+	str wzr, [x0, #4096]        // q->count = 0 (events array is 4096 bytes)
+	
+	// Register assignments for loop
+	mov x19, x0                 // x19 = q (event queue)
+	mov x20, x1                 // x20 = rng
+	mov x21, x2                 // x21 = kick_pat
+	mov x22, x3                 // x22 = snare_pat
+	mov x23, x4                 // x23 = hat_pat
+	mov w24, w5                 // w24 = step_samples
+	mov w25, wzr                // w25 = step (loop counter)
+	
+	// Constants
+	mov w26, #32                // w26 = TOTAL_STEPS
+	mov w27, #16                // w27 = STEPS_PER_BAR
+	
+	// RNG_FLOAT constants - removed unused constant
+	
+.Lbuild_loop:
+	// Check loop condition: step < TOTAL_STEPS
+	cmp w25, w26
+	b.ge .Lbuild_done
+	
+	// Calculate t = step * step_samples
+	mul w6, w25, w24            // w6 = t = step * step_samples
+	
+	// Calculate bar_step = step % STEPS_PER_BAR
+	udiv w7, w25, w27           // w7 = step / STEPS_PER_BAR
+	msub w8, w7, w27, w25       // w8 = bar_step = step - (w7 * STEPS_PER_BAR)
+	
+	// Check kick pattern: if(kick_pat[step % STEPS_PER_BAR])
+	ldrb w9, [x21, w8, uxtw]    // w9 = kick_pat[bar_step]
+	cbz w9, .Lcheck_snare
+	
+	// Push kick event: eq_push(q, t, EVT_KICK, 0)
+	mov w10, #0                 // EVT_KICK = 0
+	mov w11, #0                 // aux = 0
+	bl _generator_eq_push_helper_asm
+	
+.Lcheck_snare:
+	// Check snare pattern: if(snare_pat[step % STEPS_PER_BAR])
+	ldrb w9, [x22, w8, uxtw]    // w9 = snare_pat[bar_step]
+	cbz w9, .Lcheck_hat
+	
+	// Push snare event: eq_push(q, t, EVT_SNARE, 0)
+	mov w10, #1                 // EVT_SNARE = 1
+	mov w11, #0                 // aux = 0
+	bl _generator_eq_push_helper_asm
+	
+.Lcheck_hat:
+	// Check hat pattern: if(hat_pat[step % STEPS_PER_BAR])
+	ldrb w9, [x23, w8, uxtw]    // w9 = hat_pat[bar_step]
+	cbz w9, .Lcheck_melody
+	
+	// Push hat event: eq_push(q, t, EVT_HAT, 0)
+	mov w10, #2                 // EVT_HAT = 2
+	mov w11, #0                 // aux = 0
+	bl _generator_eq_push_helper_asm
+	
+.Lcheck_melody:
+	// Check melody triggers: if(bar_step==0 || bar_step==8 || bar_step==16 || bar_step==24)
+	cbz w8, .Lmelody_trigger    // bar_step == 0
+	cmp w8, #8
+	b.eq .Lmelody_trigger
+	cmp w8, #16
+	b.eq .Lmelody_trigger
+	cmp w8, #24
+	b.eq .Lmelody_trigger
+	b .Lcheck_mid
+	
+.Lmelody_trigger:
+	// Push melody event: eq_push(q, t, EVT_MELODY, bar_step/8)
+	lsr w11, w8, #3             // w11 = aux = bar_step / 8
+	mov w10, #3                 // EVT_MELODY = 3
+	bl _generator_eq_push_helper_asm
+	
+.Lcheck_mid:
+	// Check mid triggers: if(bar_step % 4 == 2 || ((bar_step%4==1 || bar_step%4==3) && RNG_FLOAT < 0.1))
+	and w9, w8, #3              // w9 = bar_step % 4
+	cmp w9, #2
+	b.eq .Lmid_trigger          // bar_step % 4 == 2
+	
+	// Check if bar_step % 4 == 1 or 3
+	cmp w9, #1
+	b.eq .Lmid_rng_check
+	cmp w9, #3
+	b.ne .Lcheck_bass
+	
+.Lmid_rng_check:
+	// Generate RNG_FLOAT and compare with 0.1
+	bl _generator_rng_next_float_asm   // Returns float in s0
+	
+	// Compare with 0.1f
+	mov w12, #0x3dcc
+	movk w12, #0xcccd, lsl #16  // 0.1f in IEEE 754
+	fmov s1, w12
+	fcmp s0, s1
+	b.ge .Lcheck_bass           // if RNG_FLOAT >= 0.1, skip
+	
+.Lmid_trigger:
+	// Generate random aux value: rng_next_u32() % 7
+	bl _generator_rng_next_u32_asm   // Returns uint32_t in w0
+	mov w12, #7
+	udiv w13, w0, w12
+	msub w11, w13, w12, w0      // w11 = aux = w0 % 7
+	
+	// Push mid event: eq_push(q, t, EVT_MID, aux)
+	mov w10, #4                 // EVT_MID = 4
+	bl _generator_eq_push_helper_asm
+	
+.Lcheck_bass:
+	// Check bass trigger: if(bar_step == 0)
+	cbnz w8, .Lloop_next
+	
+	// Push bass event: eq_push(q, t, EVT_FM_BASS, 0)
+	mov w10, #5                 // EVT_FM_BASS = 5
+	mov w11, #0                 // aux = 0
+	bl _generator_eq_push_helper_asm
+	
+.Lloop_next:
+	// Increment step and continue loop
+	add w25, w25, #1
+	b .Lbuild_loop
+	
+.Lbuild_done:
+	// Restore callee-saved registers
+	ldp x27, x28, [sp, #64]
+	ldp x25, x26, [sp, #48]
+	ldp x23, x24, [sp, #32]
+	ldp x21, x22, [sp, #16]
+	ldp x19, x20, [sp], #80
+	ret
+
+/*
+ * Helper function: eq_push equivalent
+ * Inputs: w6=time, w10=type, w11=aux
+ * Uses: x19=q
+ */
+	.globl _generator_eq_push_helper_asm
+_generator_eq_push_helper_asm:
+	// Load current count
+	ldr w12, [x19, #4096]       // w12 = q->count
+	
+	// Check if count < MAX_EVENTS (512)
+	cmp w12, #512
+	b.ge .Leq_push_ret          // Skip if queue full
+	
+	// Calculate event address: &q->events[count]
+	mov w13, #8                 // sizeof(event_t) = 8 bytes
+	mul w14, w12, w13           // w14 = count * sizeof(event_t)
+	add x15, x19, w14, uxtw     // x15 = &q->events[count]
+	
+	// Store event: {time, type, aux, padding}
+	str w6, [x15]               // event.time = time
+	strb w10, [x15, #4]         // event.type = type
+	strb w11, [x15, #5]         // event.aux = aux
+	
+	// Increment count
+	add w12, w12, #1
+	str w12, [x19, #4096]       // q->count++
+	
+.Leq_push_ret:
+	ret
+
+/*
+ * Helper function: rng_next_u32 equivalent
+ * Inputs: x20=rng
+ * Returns: w0=random uint32_t
+ * Preserves: x20 (rng pointer)
+ */
+	.globl _generator_rng_next_u32_asm  
+_generator_rng_next_u32_asm:
+	// Save link register and preserve registers
+	stp x29, x30, [sp, #-16]!
+	
+	// Implementation of SplitMix64 algorithm
+	// uint64_t z = (r->state += 0x9E3779B97F4A7C15ULL);
+	ldr x0, [x20]               // x0 = rng->state
+	movz x1, #0x7C15, lsl #0
+	movk x1, #0x7F4A, lsl #16
+	movk x1, #0xB979, lsl #32
+	movk x1, #0x9E37, lsl #48   // x1 = 0x9E3779B97F4A7C15
+	add x0, x0, x1              // x0 = state + increment
+	str x0, [x20]               // rng->state = new state
+	
+	// z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+	lsr x1, x0, #30
+	eor x0, x0, x1
+	movz x1, #0xE5B9, lsl #0
+	movk x1, #0x1CE4, lsl #16
+	movk x1, #0x476D, lsl #32
+	movk x1, #0xBF58, lsl #48   // x1 = 0xBF58476D1CE4E5B9
+	mul x0, x0, x1
+	
+	// z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+	lsr x1, x0, #27
+	eor x0, x0, x1
+	movz x1, #0x11EB, lsl #0
+	movk x1, #0x3311, lsl #16
+	movk x1, #0x49BB, lsl #32
+	movk x1, #0x94D0, lsl #48   // x1 = 0x94D049BB133111EB
+	mul x0, x0, x1
+	
+	// return z ^ (z >> 31);
+	lsr x1, x0, #31
+	eor x0, x0, x1
+	
+	// Return lower 32 bits
+	mov w0, w0
+	
+	// Restore and return
+	ldp x29, x30, [sp], #16
+	ret
+
+/*
+ * Helper function: rng_next_float equivalent  
+ * Inputs: x20=rng
+ * Returns: s0=random float [0,1)
+ */
+	.globl _generator_rng_next_float_asm
+_generator_rng_next_float_asm:
+	// Save link register and floating-point context
+	stp x29, x30, [sp, #-16]!
+	
+	// Call rng_next_u32
+	bl _generator_rng_next_u32_asm   // w0 = random uint32_t
+	
+	// Implement: (rng_next_u32(r) >> 8) * (1.0f / 16777216.0f)
+	lsr w0, w0, #8              // w0 = w0 >> 8
+	ucvtf s0, w0                // s0 = (float)w0
+	
+	// Multiply by 1.0f / 16777216.0f = 5.960464477539063e-08
+	movz w1, #0x0000, lsl #0
+	movk w1, #0x3380, lsl #16   // IEEE 754 representation of 1.0f/16777216.0f
+	fmov s1, w1
+	fmul s0, s0, s1             // s0 = s0 * (1.0f/16777216.0f)
+	
+	// Restore and return
+	ldp x29, x30, [sp], #16
+	ret 
+
+.section __TEXT,__cstring
+.Ldbg_fmt:
+	.asciz "ASM: rem=%u proc=%u pos=%u\n"
+.Ldbg_pre_fmt:
+	.asciz "PRE: rem=%u step=%u pos=%u\n"
+.Ldbg_post1_fmt:
+    .asciz "P1:  rem=%u proc=%u pos=%u\n" 
+.Ldbg_rms_fmt:
+	.asciz "RMSraw=%u\n" 
+.Ldbg_scratch_fmt:
+.asciz "SCR drums=%u synth=%u n=%u\n"
+.Loutput_silent_msg:
+        .asciz "OUTPUT_BUFFER_SILENT\n"
+.Loutput_audio_msg:
+        .asciz "OUTPUT_BUFFER_HAS_AUDIO\n"
+.Lmix_null_msg:
+        .asciz "MIX_NULL_POINTER_ERROR\n"
+---END---
+

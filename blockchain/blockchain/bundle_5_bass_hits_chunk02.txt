@@ -1,0 +1,645 @@
+[CHUNK 2 OF 3]
+BUNDLE_5_BASS_HITS - PART 2
+Concatenate all chunks in order to reconstruct.
+
+(rotation)
+    fmul s7, s0, s5         // dx * sin(rotation)
+    fmul s8, s1, s4         // dy * cos(rotation)
+    fadd s7, s7, s8         // rotated_y = dx * sin + dy * cos
+    
+    // Convert back to integers and add center
+    fcvtns w0, s6           // rotated_x as int
+    fcvtns w1, s7           // rotated_y as int
+    add w27, w20, w0        // final_x = cx + rotated_x
+    add w28, w21, w1        // final_y = cy + rotated_y
+    
+    // Store rotated corner back
+    mov w0, #8              // 8 bytes per corner
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to corners array
+    add x1, sp, w0, uxtw    // address of corners[i]
+    stp w27, w28, [x1]      // Store rotated coordinates
+    
+    // Get character: base_char = square_chars[i % char_count]
+    mov w0, #6              // char_count = 6
+    udiv w1, w26, w0        // w1 = i / 6
+    msub w0, w1, w0, w26    // w0 = i % 6
+    adr x1, .Lsquare_chars
+    ldrb w0, [x1, w0, uxtw] // Load square_chars[i % 6]
+    
+    // char glitched_char = get_glitched_shape_char(base_char, x, y, frame)
+    // w0 already has base_char
+    mov w1, w27             // x  
+    mov w2, w28             // y
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, x, y, glitched_char, color, alpha)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w27             // x
+    mov w2, w28             // y
+    mov w4, w23             // color
+    mov w5, w24             // alpha
+    bl _draw_ascii_char_asm
+    
+    // Increment corner index
+    add w26, w26, #1        // i++
+    b .Lsquare_corner_loop
+    
+.Lsquare_edges:
+    // Draw square edges connecting corners
+    mov w26, #0             // i = 0 (edge index)
+    
+.Lsquare_edge_loop:
+    cmp w26, #4
+    b.ge .Lsquare_done      // Done with all edges
+    
+    // Calculate next corner index: next = (i + 1) % 4
+    add w0, w26, #1         // i + 1
+    mov w1, #4              // 4 corners
+    udiv w2, w0, w1         // (i + 1) / 4
+    msub w27, w2, w1, w0    // next = (i + 1) % 4
+    
+    // Load current corner coordinates
+    mov w0, #8              // 8 bytes per corner
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to corners array
+    add x1, sp, w0, uxtw    // address of corners[i]
+    ldp w1, w2, [x1]        // Load corners[i][0], corners[i][1]
+    
+    // Load next corner coordinates  
+    mov w0, #8              // 8 bytes per corner
+    mul w0, w27, w0         // next * 8
+    add w0, w0, #104        // offset to corners array
+    add x3, sp, w0, uxtw    // address of corners[next]
+    ldp w3, w4, [x3]        // Load corners[next][0], corners[next][1]
+    
+    // Calculate steps = (abs(next_x - curr_x) + abs(next_y - curr_y)) / 12
+    sub w5, w3, w1          // next_x - curr_x
+    cmp w5, #0
+    cneg w5, w5, mi         // abs(next_x - curr_x)
+    
+    sub w6, w4, w2          // next_y - curr_y  
+    cmp w6, #0
+    cneg w6, w6, mi         // abs(next_y - curr_y)
+    
+    add w5, w5, w6          // sum of distances
+    mov w6, #12
+    udiv w28, w5, w6        // steps = distance / 12
+    
+    // Save corner coordinates for edge drawing
+    str w1, [sp, #136]      // curr_x
+    str w2, [sp, #140]      // curr_y (4-byte aligned)  
+    str w3, [sp, #144]      // next_x
+    str w4, [sp, #148]      // next_y
+    
+    // Draw line between corners
+    mov w27, #1             // step = 1 (start from 1, not 0)
+    
+.Lsquare_line_loop:
+    cmp w27, w28            // step < steps?
+    b.ge .Lsquare_next_edge
+    
+    // Calculate t = (float)step / steps
+    scvtf s0, w27           // step as float
+    scvtf s1, w28           // steps as float
+    fdiv s2, s0, s1         // t = step / steps
+    
+    // Calculate line coordinates
+    // line_x = curr_x + (int)(t * (next_x - curr_x))
+    ldr w0, [sp, #136]      // curr_x
+    ldr w1, [sp, #144]      // next_x
+    sub w1, w1, w0          // next_x - curr_x
+    scvtf s0, w1            // (next_x - curr_x) as float
+    fmul s0, s2, s0         // t * (next_x - curr_x)
+    fcvtns w1, s0           // convert to int
+    add w1, w0, w1          // line_x = curr_x + result
+    
+    // line_y = curr_y + (int)(t * (next_y - curr_y))
+    ldr w0, [sp, #140]      // curr_y
+    ldr w2, [sp, #148]      // next_y
+    sub w2, w2, w0          // next_y - curr_y
+    scvtf s0, w2            // (next_y - curr_y) as float
+    fmul s0, s2, s0         // t * (next_y - curr_y)
+    fcvtns w2, s0           // convert to int
+    add w2, w0, w2          // line_y = curr_y + result
+    
+    // char line_char = get_glitched_shape_char('-', line_x, line_y, frame)
+    mov w0, #'-'            // base character for lines
+    // w1 already has line_x
+    // w2 already has line_y  
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, line_x, line_y, glitched_char, color, alpha - 50)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    // w1 already has line_x
+    // w2 already has line_y
+    mov w4, w23             // color
+    sub w5, w24, #50        // alpha - 50
+    cmp w5, #0              // Ensure alpha doesn't go negative
+    csel w5, w5, wzr, ge    // max(alpha - 50, 0)
+    bl _draw_ascii_char_asm
+    
+    // Increment step
+    add w27, w27, #1        // step++
+    b .Lsquare_line_loop
+    
+.Lsquare_next_edge:
+    // Increment edge index
+    add w26, w26, #1        // i++
+    b .Lsquare_edge_loop
+    
+.Lsquare_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #160
+    ret
+
+// Draw ASCII triangle
+// void draw_ascii_triangle(uint32_t *pixels, int cx, int cy, int size, float rotation, uint32_t color, int alpha, int frame)
+// Input: x0=pixels, w1=cx, w2=cy, w3=size, s0=rotation, w4=color, w5=alpha, w6=frame
+.global _draw_ascii_triangle_asm
+_draw_ascii_triangle_asm:
+    stp x29, x30, [sp, #-144]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    
+    // Check size threshold
+    cmp w3, #8
+    b.lt .Ltriangle_done    // return if size < 8
+    
+    // Save all parameters to dedicated registers
+    mov x19, x0             // pixels pointer  
+    mov w20, w1             // cx
+    mov w21, w2             // cy  
+    mov w22, w3             // size
+    str s0, [sp, #96]       // rotation (on stack)
+    mov w23, w4             // color
+    mov w24, w5             // alpha
+    mov w25, w6             // frame
+    
+    // Loop counter in dedicated register
+    mov w26, #0             // i = 0 (vertex index, 0-2)
+    
+    // for (int i = 0; i < 3; i++)
+.Ltriangle_vertex_loop:
+    cmp w26, #3
+    b.ge .Ltriangle_done
+    
+    // float angle = rotation + i * 2.0f * M_PI / 3.0f
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_2pi_3   // 2.0f * M_PI / 3.0f ≈ 2.094395
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (2.0f * M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (2.0f * M_PI / 3.0f)
+    
+    // int x = cx + (int)(cosf(angle) * size * 0.8f)
+    bl _cos_lut_asm         // s0 = cos(angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // cos(angle) * size
+    adr x0, .Lconst_0_8     
+    ldr s1, [x0]            // 0.8f
+    fmul s0, s0, s1         // cos(angle) * size * 0.8f
+    fcvtns w27, s0          // Convert to int, store in w27
+    add w27, w20, w27       // x = cx + result
+    
+    // int y = cy + (int)(sinf(angle) * size * 0.8f)  
+    // Recalculate angle since cosf modified s0
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_2pi_3    
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (2.0f * M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (2.0f * M_PI / 3.0f)
+    
+    bl _sin_lut_asm         // s0 = sin(angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // sin(angle) * size
+    adr x0, .Lconst_0_8
+    ldr s1, [x0]            // 0.8f
+    fmul s0, s0, s1         // sin(angle) * size * 0.8f
+    fcvtns w28, s0          // Convert to int, store in w28
+    add w28, w21, w28       // y = cy + result
+    
+    // Store current vertex coordinates for line drawing
+    str w27, [sp, #100]     // Store current x
+    str w28, [sp, #104]     // Store current y
+    
+    // char base_char = triangle_chars[i % char_count]
+    mov w0, #5              // char_count = 5
+    udiv w1, w26, w0        // w1 = i / 5
+    msub w0, w1, w0, w26    // w0 = i % 5
+    adr x1, .Ltriangle_chars
+    ldrb w0, [x1, w0, uxtw] // Load triangle_chars[i % 5]
+    
+    // char glitched_char = get_glitched_shape_char(base_char, x, y, frame)
+    // w0 already has base_char
+    mov w1, w27             // x  
+    mov w2, w28             // y
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, x, y, glitched_char, color, alpha)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w27             // x
+    mov w2, w28             // y
+    mov w4, w23             // color
+    mov w5, w24             // alpha
+    bl _draw_ascii_char_asm
+    
+    // Calculate next vertex for line drawing
+    // float next_angle = rotation + ((i + 1) % 3) * 2.0f * M_PI / 3.0f
+    add w0, w26, #1         // i + 1
+    mov w1, #3              // 3 vertices
+    udiv w2, w0, w1         // (i + 1) / 3
+    msub w0, w2, w1, w0     // next_i = (i + 1) % 3
+    
+    scvtf s1, w0            // Convert next_i to float
+    adr x1, .Lconst_2pi_3   
+    ldr s2, [x1]
+    fmul s1, s1, s2         // next_i * (2.0f * M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // next_angle = rotation + next_i * (2.0f * M_PI / 3.0f)
+    
+    // int next_x = cx + (int)(cosf(next_angle) * size * 0.8f)
+    bl _cos_lut_asm         // s0 = cos(next_angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // cos(next_angle) * size
+    adr x1, .Lconst_0_8     
+    ldr s1, [x1]            // 0.8f
+    fmul s0, s0, s1         // cos(next_angle) * size * 0.8f
+    fcvtns w0, s0           // Convert to int
+    add w0, w20, w0         // next_x = cx + result
+    str w0, [sp, #108]      // Store next_x
+    
+    // int next_y = cy + (int)(sinf(next_angle) * size * 0.8f)
+    // Recalculate next_angle since cosf modified s0
+    add w0, w26, #1         // i + 1
+    mov w1, #3              // 3 vertices
+    udiv w2, w0, w1         // (i + 1) / 3
+    msub w0, w2, w1, w0     // next_i = (i + 1) % 3
+    
+    scvtf s1, w0            // Convert next_i to float
+    adr x1, .Lconst_2pi_3   
+    ldr s2, [x1]
+    fmul s1, s1, s2         // next_i * (2.0f * M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // next_angle
+    
+    bl _sin_lut_asm         // s0 = sin(next_angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // sin(next_angle) * size
+    adr x1, .Lconst_0_8
+    ldr s1, [x1]            // 0.8f
+    fmul s0, s0, s1         // sin(next_angle) * size * 0.8f
+    fcvtns w0, s0           // Convert to int
+    add w0, w21, w0         // next_y = cy + result
+    
+    // Store next_y properly first
+    str w0, [sp, #112]      // Store next_y
+    
+    // Draw line between current vertex and next vertex
+    // Load coordinates into dedicated registers
+    ldr w1, [sp, #100]      // curr_x
+    ldr w2, [sp, #104]      // curr_y
+    ldr w3, [sp, #108]      // next_x
+    ldr w4, [sp, #112]      // next_y
+    
+    // Store these in a way that won't get corrupted
+    str w1, [sp, #116]      // Store curr_x
+    str w2, [sp, #120]      // Store curr_y  
+    str w3, [sp, #124]      // Store next_x
+    str w4, [sp, #128]      // Store next_y
+    
+    // Calculate steps = abs(next_x - curr_x) + abs(next_y - curr_y)
+    sub w5, w3, w1          // next_x - curr_x
+    cmp w5, #0
+    cneg w5, w5, mi         // abs(next_x - curr_x)
+    
+    sub w6, w4, w2          // next_y - curr_y  
+    cmp w6, #0
+    cneg w6, w6, mi         // abs(next_y - curr_y)
+    
+    add w5, w5, w6          // sum of distances
+    mov w6, #12
+    udiv w0, w5, w6         // steps = distance / 12
+    
+    // Draw line points
+    mov w27, #1             // step = 1 (start from 1, not 0)
+    
+.Ltriangle_line_loop:
+    cmp w27, w0             // step < steps?
+    b.ge .Ltriangle_next_vertex
+    
+    // Calculate t = (float)step / steps
+    scvtf s0, w27           // step as float
+    scvtf s1, w0            // steps as float
+    fdiv s2, s0, s1         // t = step / steps
+    
+    // Calculate line coordinates using stored values
+    // line_x = curr_x + (int)(t * (next_x - curr_x))
+    ldr w1, [sp, #116]      // Reload curr_x
+    ldr w3, [sp, #124]      // Reload next_x
+    sub w5, w3, w1          // next_x - curr_x
+    scvtf s0, w5            // (next_x - curr_x) as float
+    fmul s0, s2, s0         // t * (next_x - curr_x)
+    fcvtns w5, s0           // convert to int
+    add w5, w1, w5          // line_x = curr_x + result
+    
+    // line_y = curr_y + (int)(t * (next_y - curr_y))
+    ldr w2, [sp, #120]      // Reload curr_y
+    ldr w4, [sp, #128]      // Reload next_y
+    sub w6, w4, w2          // next_y - curr_y
+    scvtf s0, w6            // (next_y - curr_y) as float
+    fmul s0, s2, s0         // t * (next_y - curr_y)
+    fcvtns w6, s0           // convert to int
+    add w6, w2, w6          // line_y = curr_y + result
+    
+    // char line_char = get_glitched_shape_char('-', line_x, line_y, frame)
+    mov w0, #'-'            // base character for lines
+    mov w1, w5              // line_x
+    mov w2, w6              // line_y  
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, line_x, line_y, glitched_char, color, alpha - 50)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w5              // line_x
+    mov w2, w6              // line_y
+    mov w4, w23             // color
+    sub w5, w24, #50        // alpha - 50
+    cmp w5, #0              // Ensure alpha doesn't go negative
+    csel w5, w5, wzr, ge    // max(alpha - 50, 0)
+    bl _draw_ascii_char_asm
+    
+    // Increment step
+    add w27, w27, #1        // step++
+    b .Ltriangle_line_loop
+    
+.Ltriangle_next_vertex:
+    // Increment vertex index
+    add w26, w26, #1        // i++
+    b .Ltriangle_vertex_loop
+
+.Ltriangle_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #144
+    ret
+
+// Draw ASCII diamond
+// void draw_ascii_diamond(uint32_t *pixels, int cx, int cy, int size, float rotation, uint32_t color, int alpha, int frame)
+// Input: x0=pixels, w1=cx, w2=cy, w3=size, s0=rotation, w4=color, w5=alpha, w6=frame
+.global _draw_ascii_diamond_asm
+_draw_ascii_diamond_asm:
+    stp x29, x30, [sp, #-144]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    
+    // Check size threshold
+    cmp w3, #8
+    b.lt .Ldiamond_done     // return if size < 8
+    
+    // Save all parameters to dedicated registers
+    mov x19, x0             // pixels pointer  
+    mov w20, w1             // cx
+    mov w21, w2             // cy  
+    mov w22, w3             // size
+    str s0, [sp, #96]       // rotation (on stack)
+    mov w23, w4             // color
+    mov w24, w5             // alpha
+    mov w25, w6             // frame
+    
+    // Calculate diamond points (4 points: top, right, bottom, left)
+    // points[4][2] = {{cx, cy-size}, {cx+size, cy}, {cx, cy+size}, {cx-size, cy}}
+    mov w0, w20             // cx
+    sub w1, w21, w22        // cy - size
+    stp w0, w1, [sp, #104]  // Store point 0: top
+    
+    add w0, w20, w22        // cx + size  
+    mov w1, w21             // cy
+    stp w0, w1, [sp, #112]  // Store point 1: right
+    
+    mov w0, w20             // cx
+    add w1, w21, w22        // cy + size  
+    stp w0, w1, [sp, #120]  // Store point 2: bottom
+    
+    sub w0, w20, w22        // cx - size
+    mov w1, w21             // cy
+    stp w0, w1, [sp, #128]  // Store point 3: left
+    
+    // Apply rotation to points and draw them
+    mov w26, #0             // i = 0 (point index)
+    
+.Ldiamond_point_loop:
+    cmp w26, #4
+    b.ge .Ldiamond_edges    // Done with points, now draw edges
+    
+    // Load point coordinates
+    mov w0, #8              // 8 bytes per point (2 ints)
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to points array
+    add x1, sp, w0, uxtw    // address of points[i]
+    ldp w27, w28, [x1]      // Load points[i][0], points[i][1]
+    
+    // Calculate dx = points[i][0] - cx, dy = points[i][1] - cy
+    sub w0, w27, w20        // dx = points[i][0] - cx
+    sub w1, w28, w21        // dy = points[i][1] - cy
+    scvtf s0, w0            // dx as float
+    scvtf s1, w1            // dy as float
+    
+    // Rotate: rotated_x = dx * cos(rotation) - dy * sin(rotation)
+    //         rotated_y = dx * sin(rotation) + dy * cos(rotation)
+    ldr s2, [sp, #96]       // Load rotation
+    
+    // Calculate cos(rotation)
+    fmov s3, s2             // Copy rotation for cos call
+    bl _cos_lut_asm         // s0 = cos(rotation) from LUT
+    fmov s4, s0             // Save cos result in s4
+    
+    // Calculate sin(rotation)  
+    ldr s2, [sp, #96]       // Reload rotation
+    fmov s0, s2             // Set up for sin call
+    bl _sin_lut_asm         // s0 = sin(rotation) from LUT
+    fmov s5, s0             // Save sin result in s5
+    
+    // Reload dx, dy
+    sub w0, w27, w20        // dx = points[i][0] - cx
+    sub w1, w28, w21        // dy = points[i][1] - cy  
+    scvtf s0, w0            // dx as float
+    scvtf s1, w1            // dy as float
+    
+    // Now compute rotated coordinates
+    fmul s6, s0, s4         // dx * cos(rotation)
+    fmul s7, s1, s5         // dy * sin(rotation)
+    fsub s6, s6, s7         // rotated_x = dx * cos - dy * sin
+    
+    fmul s7, s0, s5         // dx * sin(rotation)
+    fmul s8, s1, s4         // dy * cos(rotation)
+    fadd s7, s7, s8         // rotated_y = dx * sin + dy * cos
+    
+    // Convert back to integers and add center
+    fcvtns w0, s6           // rotated_x as int
+    fcvtns w1, s7           // rotated_y as int
+    add w27, w20, w0        // final_x = cx + rotated_x
+    add w28, w21, w1        // final_y = cy + rotated_y
+    
+    // Store rotated point back
+    mov w0, #8              // 8 bytes per point
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to points array
+    add x1, sp, w0, uxtw    // address of points[i]
+    stp w27, w28, [x1]      // Store rotated coordinates
+    
+    // Get character: base_char = diamond_chars[i % char_count]
+    mov w0, #5              // char_count = 5
+    udiv w1, w26, w0        // w1 = i / 5
+    msub w0, w1, w0, w26    // w0 = i % 5
+    adr x1, .Ldiamond_chars
+    ldrb w0, [x1, w0, uxtw] // Load diamond_chars[i % 5]
+    
+    // char glitched_char = get_glitched_shape_char(base_char, x, y, frame)
+    // w0 already has base_char
+    mov w1, w27             // x  
+    mov w2, w28             // y
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, x, y, glitched_char, color, alpha)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w27             // x
+    mov w2, w28             // y
+    mov w4, w23             // color
+    mov w5, w24             // alpha
+    bl _draw_ascii_char_asm
+    
+    // Increment point index
+    add w26, w26, #1        // i++
+    b .Ldiamond_point_loop
+    
+.Ldiamond_edges:
+    // Draw diamond edges connecting points
+    mov w26, #0             // i = 0 (edge index)
+    
+.Ldiamond_edge_loop:
+    cmp w26, #4
+    b.ge .Ldiamond_done     // Done with all edges
+    
+    // Calculate next point index: next = (i + 1) % 4
+    add w0, w26, #1         // i + 1
+    mov w1, #4              // 4 points
+    udiv w2, w0, w1         // (i + 1) / 4
+    msub w27, w2, w1, w0    // next = (i + 1) % 4
+    
+    // Load current point coordinates
+    mov w0, #8              // 8 bytes per point
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to points array
+    add x1, sp, w0, uxtw    // address of points[i]
+    ldp w1, w2, [x1]        // Load points[i][0], points[i][1]
+    
+    // Load next point coordinates  
+    mov w0, #8              // 8 bytes per point
+    mul w0, w27, w0         // next * 8
+    add w0, w0, #104        // offset to points array
+    add x3, sp, w0, uxtw    // address of points[next]
+    ldp w3, w4, [x3]        // Load points[next][0], points[next][1]
+    
+    // Calculate steps = (abs(next_x - curr_x) + abs(next_y - curr_y)) / 12
+    sub w5, w3, w1          // next_x - curr_x
+    cmp w5, #0
+    cneg w5, w5, mi         // abs(next_x - curr_x)
+    
+    sub w6, w4, w2          // next_y - curr_y  
+    cmp w6, #0
+    cneg w6, w6, mi         // abs(next_y - curr_y)
+    
+    add w5, w5, w6          // sum of distances
+    mov w6, #12
+    udiv w28, w5, w6        // steps = distance / 12
+    
+    // Save point coordinates for edge drawing
+    str w1, [sp, #136]      // curr_x
+    str w2, [sp, #140]      // curr_y
+    str w3, [sp, #144]      // next_x (note: using unused stack space)
+    str w4, [sp, #148]      // next_y
+    
+    // Draw line between points
+    mov w27, #1             // step = 1 (start from 1, not 0)
+    
+.Ldiamond_line_loop:
+    cmp w27, w28            // step < steps?
+    b.ge .Ldiamond_next_edge
+    
+    // Calculate t = (float)step / steps
+    scvtf s0, w27           // step as float
+    scvtf s1, w28           // steps as float
+    fdiv s2, s0, s1         // t = step / steps
+    
+    // Calculate line coordinates
+    // line_x = curr_x + (int)(t * (next_x - curr_x))
+    ldr w0, [sp, #136]      // curr_x
+    ldr w1, [sp, #144]      // next_x
+    sub w1, w1, w0          // next_x - curr_x
+    scvtf s0, w1            // (next_x - curr_x) as float
+    fmul s0, s2, s0         // t * (next_x - curr_x)
+    fcvtns w1, s0           // convert to int
+    add w1, w0, w1          // line_x = curr_x + result
+    
+    // line_y = curr_y + (int)(t * (next_y - curr_y))
+    ldr w0, [sp, #140]      // curr_y
+    ldr w2, [sp, #148]      // next_y
+    sub w2, w2, w0          // next_y - curr_y
+    scvtf s0, w2            // (next_y - curr_y) as float
+    fmul s0, s2, s0         // t * (next_y - curr_y)
+    fcvtns w2, s0           // convert to int
+    add w2, w0, w2          // line_y = curr_y + result
+    
+    // char line_char = get_glitched_shape_char('=', line_x, line_y, frame)
+    mov w0, #'='            // base character for diamond lines
+    // w1 already has line_x
+    // w2 already has line_y  
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, line_x, line_y, glitched_char, color, alpha - 50)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    // w1 already has line_x
+    // w2 already has line_y
+    mov w4, w23             // color
+    sub w5, w24, #50        // alpha - 50
+    cmp w5, #0              // Ensure alpha doesn't go negative
+    csel w5, w5, wzr, ge    // max(alpha - 50, 0)
+    bl _draw_ascii_char_asm
+    
+    // Increment step
+    add w27, w27, #1        // step++
+    b .Ldiamond_

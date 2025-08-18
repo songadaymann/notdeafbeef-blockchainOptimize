@@ -1,0 +1,455 @@
+[CHUNK 3 OF 3]
+BUNDLE_5_BASS_HITS - PART 3
+Concatenate all chunks in order to reconstruct.
+
+line_loop
+    
+.Ldiamond_next_edge:
+    // Increment edge index
+    add w26, w26, #1        // i++
+    b .Ldiamond_edge_loop
+    
+.Ldiamond_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #144
+    ret
+
+// Draw ASCII star
+// void draw_ascii_star(uint32_t *pixels, int cx, int cy, int size, float rotation, uint32_t color, int alpha, int frame)
+// Input: x0=pixels, w1=cx, w2=cy, w3=size, s0=rotation, w4=color, w5=alpha, w6=frame
+.global _draw_ascii_star_asm
+_draw_ascii_star_asm:
+    stp x29, x30, [sp, #-112]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    
+    // Check size threshold
+    cmp w3, #8
+    b.lt .Lstar_done        // return if size < 8
+    
+    // Save all parameters to dedicated registers
+    mov x19, x0             // pixels pointer  
+    mov w20, w1             // cx
+    mov w21, w2             // cy  
+    mov w22, w3             // size
+    str s0, [sp, #96]       // rotation (on stack)
+    mov w23, w4             // color
+    mov w24, w5             // alpha
+    mov w25, w6             // frame
+    
+    // Loop counter in dedicated register
+    mov w26, #0             // i = 0 (point index, 0-9 for 10 points)
+    
+    // for (int i = 0; i < 10; i++) - 5-pointed star with inner/outer points
+.Lstar_point_loop:
+    cmp w26, #10
+    b.ge .Lstar_done
+    
+    // float angle = rotation + i * M_PI / 5.0f
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_pi_5    // M_PI / 5.0f ≈ 0.628318
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (M_PI / 5.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (M_PI / 5.0f)
+    
+    // float radius = (i % 2 == 0) ? size * 0.8f : size * 0.4f; // Alternate between outer and inner
+    mov w0, #2
+    udiv w1, w26, w0        // w1 = i / 2
+    msub w0, w1, w0, w26    // w0 = i % 2
+    
+    scvtf s1, w22           // Convert size to float
+    cmp w0, #0              // i % 2 == 0?
+    b.ne .Lstar_inner_radius
+    
+    // Outer radius: size * 0.8f
+    adr x0, .Lconst_0_8     
+    ldr s2, [x0]            // 0.8f
+    fmul s1, s1, s2         // size * 0.8f
+    b .Lstar_calc_pos
+    
+.Lstar_inner_radius:
+    // Inner radius: size * 0.4f
+    adr x0, .Lconst_0_4     
+    ldr s2, [x0]            // 0.4f
+    fmul s1, s1, s2         // size * 0.4f
+    
+.Lstar_calc_pos:
+    // s1 now contains the radius
+    // int x = cx + (int)(cosf(angle) * radius)
+    bl _cos_lut_asm         // s0 = cos(angle) from LUT
+    fmul s0, s0, s1         // cos(angle) * radius
+    fcvtns w27, s0          // Convert to int, store in w27
+    add w27, w20, w27       // x = cx + result
+    
+    // int y = cy + (int)(sinf(angle) * radius)  
+    // Recalculate angle since cosf modified s0
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_pi_5    
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (M_PI / 5.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (M_PI / 5.0f)
+    
+    // Recalculate radius
+    mov w0, #2
+    udiv w1, w26, w0        // w1 = i / 2
+    msub w0, w1, w0, w26    // w0 = i % 2
+    
+    scvtf s1, w22           // Convert size to float
+    cmp w0, #0              // i % 2 == 0?
+    b.ne .Lstar_inner_radius2
+    
+    // Outer radius: size * 0.8f
+    adr x0, .Lconst_0_8     
+    ldr s2, [x0]            // 0.8f
+    fmul s1, s1, s2         // size * 0.8f
+    b .Lstar_calc_y
+    
+.Lstar_inner_radius2:
+    // Inner radius: size * 0.4f
+    adr x0, .Lconst_0_4     
+    ldr s2, [x0]            // 0.4f
+    fmul s1, s1, s2         // size * 0.4f
+    
+.Lstar_calc_y:
+    bl _sin_lut_asm         // s0 = sin(angle) from LUT
+    fmul s0, s0, s1         // sin(angle) * radius
+    fcvtns w28, s0          // Convert to int, store in w28
+    add w28, w21, w28       // y = cy + result
+    
+    // char base_char = star_chars[i % char_count]
+    mov w0, #8              // char_count = 8
+    udiv w1, w26, w0        // w1 = i / 8
+    msub w0, w1, w0, w26    // w0 = i % 8
+    adr x1, .Lstar_chars
+    ldrb w0, [x1, w0, uxtw] // Load star_chars[i % 8]
+    
+    // char glitched_char = get_glitched_shape_char(base_char, x, y, frame)
+    // w0 already has base_char
+    mov w1, w27             // x  
+    mov w2, w28             // y
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, x, y, glitched_char, color, alpha)
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w27             // x
+    mov w2, w28             // y
+    mov w4, w23             // color
+    mov w5, w24             // alpha
+    bl _draw_ascii_char_asm
+    
+    // Increment loop counter
+    add w26, w26, #1        // i++
+    b .Lstar_point_loop
+    
+.Lstar_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #112
+    ret
+
+// Update all active bass hits
+// void update_bass_hits(float elapsed_ms, float step_sec, float base_hue, uint32_t seed)
+// Input: s0=elapsed_ms, s1=step_sec, s2=base_hue, w0=seed
+.global _update_bass_hits_asm
+_update_bass_hits_asm:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    str s0, [sp, #48]       // elapsed_ms
+    str s1, [sp, #52]       // step_sec
+    str s2, [sp, #56]       // base_hue
+    str w0, [sp, #60]       // seed
+    
+    // Check if initialized
+    adrp x0, bass_hits_initialized@PAGE
+    add x0, x0, bass_hits_initialized@PAGEOFF
+    ldrb w1, [x0]
+    cmp w1, #0
+    b.eq .Lupdate_done      // Return if not initialized
+    
+    // Calculate current step: (int)(elapsed_ms / 1000.0f / step_sec) % 32
+    ldr s0, [sp, #48]       // elapsed_ms
+    adr x0, .Lconst_1000
+    ldr s1, [x0]            // 1000.0f
+    fdiv s0, s0, s1         // elapsed_ms / 1000.0f
+    ldr s1, [sp, #52]       // step_sec
+    fdiv s0, s0, s1         // elapsed_ms / 1000.0f / step_sec
+    fcvtzs w19, s0          // Convert to int
+    mov w0, #32
+    udiv w1, w19, w0        // current_step / 32
+    msub w19, w1, w0, w19   // current_step = current_step % 32
+    
+    // Check if we should spawn: current_step % (STEPS_PER_BEAT * 8) == 0
+    mov w0, #32             // STEPS_PER_BEAT * 8 = 4 * 8 = 32
+    udiv w1, w19, w0        // current_step / 32
+    msub w0, w1, w0, w19    // current_step % 32
+    cmp w0, #0
+    b.ne .Lupdate_check_hits // Skip spawn if not on beat
+    
+    // Check if different from last step
+    adrp x0, last_bass_step@PAGE
+    add x0, x0, last_bass_step@PAGEOFF
+    ldr w1, [x0]
+    cmp w19, w1
+    b.eq .Lupdate_check_hits // Skip if same step
+    
+    // Update last step and spawn
+    str w19, [x0]           // last_bass_step = current_step
+    
+    // Call spawn_bass_hit(base_hue, seed + current_step)
+    ldr s0, [sp, #56]       // base_hue
+    ldr w1, [sp, #60]       // seed
+    add w0, w1, w19         // seed + current_step
+    bl _spawn_bass_hit_asm
+    
+.Lupdate_check_hits:
+    // Update all active bass hits
+    adrp x19, bass_hits_array@PAGE
+    add x19, x19, bass_hits_array@PAGEOFF
+    mov w20, #0             // i = 0
+    
+.Lupdate_hit_loop:
+    cmp w20, #16            // MAX_BASS_HITS = 16
+    b.ge .Lupdate_done
+    
+    // Get pointer to bass_hits[i]
+    mov w0, #32             // sizeof(bass_hit_t) = 32
+    mul w1, w20, w0         // i * 32
+    add x21, x19, w1, uxtw  // hit = &bass_hits[i]
+    
+    // Check if active: if (!hit->active) continue
+    ldr w0, [x21, #28]      // Load active flag (offset 28)
+    cmp w0, #0
+    b.eq .Lupdate_next_hit  // Skip if not active
+    
+    // Update scale: if (hit->scale < 1.0f) hit->scale += 0.15f
+    ldr s0, [x21, #12]      // Load scale (offset 12)
+    adr x0, .Lconst_1_0
+    ldr s1, [x0]            // 1.0f
+    fcmp s0, s1
+    b.ge .Lupdate_scale_done
+    
+    adr x0, .Lconst_0_15
+    ldr s1, [x0]            // 0.15f
+    fadd s0, s0, s1         // scale += 0.15f
+    str s0, [x21, #12]      // Store updated scale
+    
+.Lupdate_scale_done:
+    // Update alpha: hit->alpha = hit->alpha > 8 ? hit->alpha - 8 : 0
+    ldr w0, [x21, #8]       // Load alpha (offset 8)
+    cmp w0, #8
+    b.le .Lupdate_alpha_zero
+    
+    sub w0, w0, #8          // alpha - 8
+    b .Lupdate_alpha_store
+    
+.Lupdate_alpha_zero:
+    mov w0, #0              // alpha = 0
+    
+.Lupdate_alpha_store:
+    str w0, [x21, #8]       // Store updated alpha
+    
+    // Update rotation: hit->rotation += hit->rot_speed
+    ldr s0, [x21, #20]      // Load rotation (offset 20)
+    ldr s1, [x21, #24]      // Load rot_speed (offset 24)
+    fadd s0, s0, s1         // rotation += rot_speed
+    str s0, [x21, #20]      // Store updated rotation
+    
+    // Check if should deactivate: if (hit->alpha <= 0) hit->active = false
+    ldr w0, [x21, #8]       // Load alpha
+    cmp w0, #0
+    b.gt .Lupdate_next_hit
+    
+    mov w0, #0              // false
+    str w0, [x21, #28]      // hit->active = false
+    
+.Lupdate_next_hit:
+    add w20, w20, #1        // i++
+    b .Lupdate_hit_loop
+    
+.Lupdate_done:
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// Draw all active bass hits
+// void draw_bass_hits(uint32_t *pixels, int frame)
+// Input: x0=pixels, w1=frame
+.global _draw_bass_hits_asm
+_draw_bass_hits_asm:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    mov x19, x0             // pixels
+    mov w20, w1             // frame
+    
+    // Check if initialized
+    adrp x0, bass_hits_initialized@PAGE
+    add x0, x0, bass_hits_initialized@PAGEOFF
+    ldrb w1, [x0]
+    cmp w1, #0
+    b.eq .Ldraw_done        // Return if not initialized
+    
+    // Calculate center: cx = VIS_WIDTH / 2, cy = VIS_HEIGHT / 2
+    mov w21, #400           // cx = 800 / 2 = 400
+    mov w22, #300           // cy = 600 / 2 = 300
+    
+    // Get bass hits array pointer
+    adrp x23, bass_hits_array@PAGE
+    add x23, x23, bass_hits_array@PAGEOFF
+    mov w24, #0             // i = 0
+    
+.Ldraw_hit_loop:
+    cmp w24, #16            // MAX_BASS_HITS = 16
+    b.ge .Ldraw_done
+    
+    // Get pointer to bass_hits[i]
+    mov w0, #32             // sizeof(bass_hit_t) = 32
+    mul w1, w24, w0         // i * 32
+    add x0, x23, w1, uxtw   // hit = &bass_hits[i]
+    
+    // Check if active and visible: if (!hit->active || hit->alpha <= 0) continue
+    ldr w1, [x0, #28]       // Load active flag
+    cmp w1, #0
+    b.eq .Ldraw_next_hit    // Skip if not active
+    
+    ldr w1, [x0, #8]        // Load alpha
+    cmp w1, #0
+    b.le .Ldraw_next_hit    // Skip if alpha <= 0
+    
+    // Calculate size: int size = (int)(hit->max_size * fminf(hit->scale, 1.0f))
+    ldr s0, [x0, #16]       // Load max_size (offset 16)
+    ldr s1, [x0, #12]       // Load scale (offset 12)
+    adr x1, .Lconst_1_0
+    ldr s2, [x1]            // 1.0f
+    fcmp s1, s2
+    fcsel s1, s1, s2, le    // s1 = fminf(scale, 1.0f)
+    fmul s0, s0, s1         // max_size * scale
+    fcvtzs w2, s0           // Convert to int size
+    
+    // Get color: uint32_t color = color_to_pixel(hit->color)
+    add x1, x0, #4          // pointer to hit->color (offset 4)
+    stp x0, x1, [sp, #64]   // Save hit pointer and color pointer
+    str w2, [sp, #72]       // Save size
+    mov x0, x1              // color pointer
+    bl _color_to_pixel
+    mov w3, w0              // color result
+    ldp x0, x1, [sp, #64]   // Restore pointers
+    ldr w2, [sp, #72]       // Restore size
+    
+    // Get other parameters
+    ldr w4, [x0, #8]        // alpha
+    ldr s0, [x0, #20]       // rotation
+    ldr w5, [x0]            // shape_type
+    
+    // Set up function call parameters in correct order
+    mov x0, x19             // pixels
+    mov w1, w21             // cx  
+    mov w2, w22             // cy
+    // Move parameters to correct registers (do in reverse order to avoid overwriting)
+    mov w5, w4              // alpha (w4 -> w5)
+    mov w4, w3              // color (w3 -> w4)  
+    mov w3, w2              // size (w2 -> w3)
+    // s0 already has rotation  
+    mov w6, w20             // frame
+    
+    // Call appropriate shape function based on shape_type
+    cmp w5, #0              // BASS_TRIANGLE = 0
+    b.eq .Ldraw_triangle
+    cmp w5, #1              // BASS_DIAMOND = 1
+    b.eq .Ldraw_diamond
+    cmp w5, #2              // BASS_HEXAGON = 2
+    b.eq .Ldraw_hexagon
+    cmp w5, #3              // BASS_STAR = 3
+    b.eq .Ldraw_star
+    cmp w5, #4              // BASS_SQUARE = 4
+    b.eq .Ldraw_square
+    b .Ldraw_next_hit       // Unknown shape type
+    
+.Ldraw_triangle:
+    bl _draw_ascii_triangle_asm
+    b .Ldraw_next_hit
+    
+.Ldraw_diamond:
+    bl _draw_ascii_diamond_asm
+    b .Ldraw_next_hit
+    
+.Ldraw_hexagon:
+    bl _draw_ascii_hexagon_asm
+    b .Ldraw_next_hit
+    
+.Ldraw_star:
+    bl _draw_ascii_star_asm
+    b .Ldraw_next_hit
+    
+.Ldraw_square:
+    bl _draw_ascii_square_asm
+    b .Ldraw_next_hit
+    
+.Ldraw_next_hit:
+    add w24, w24, #1        // i++
+    b .Ldraw_hit_loop
+    
+.Ldraw_done:
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// All character arrays and constants
+.align 1
+.Lhex_chars:
+    .byte 'O', '0', '#', '*', '+', 'X'
+
+.Lsquare_chars:
+    .byte '#', '=', '+', 'H', 'M', 'W'
+
+.Ltriangle_chars:
+    .byte '^', 'A', '/', '\\', '-'
+
+.Ldiamond_chars:
+    .byte '<', '>', '^', 'v', '*'
+
+.Lstar_chars:
+    .byte '*', '+', 'x', 'X', '^', 'v', '<', '>'
+
+// All floating point constants
+.align 4
+.Lconst_pi_3:
+    .float 1.047198         // M_PI / 3.0f
+.Lconst_0_7:
+    .float 0.7
+.Lconst_2pi_3:
+    .float 2.094395         // 2.0f * M_PI / 3.0f
+.Lconst_0_8:
+    .float 0.8
+.Lconst_pi_5:
+    .float 0.628318         // M_PI / 5.0f
+.Lconst_0_15:
+    .float 0.15
+.Lconst_1000:
+    .float 1000.0
+
+---END---
+

@@ -1,0 +1,391 @@
+[CHUNK 2 OF 2]
+BUNDLE_4_TERRAIN - PART 2
+Concatenate all chunks in order to reconstruct.
+
+ terrain_audio_level = audio_level
+    
+    // Check if initialized
+    adrp x0, terrain_initialized@PAGE
+    add x0, x0, terrain_initialized@PAGEOFF
+    ldrb w1, [x0]
+    cmp w1, #0
+    b.eq .Ldraw_terrain_done // Return if not initialized
+    
+    // Constants
+    mov w21, #8             // char_width = 8
+    mov w22, #12            // char_height = 12
+    
+    // int offset = (frame * SCROLL_SPEED) % TILE_SIZE
+    // OPTIMIZATION: bitwise AND since TILE_SIZE=32 is power of 2  
+    mov w0, #2              // SCROLL_SPEED = 2
+    mul w0, w20, w0         // frame * SCROLL_SPEED
+    and w23, w0, #31        // offset = (frame * SCROLL_SPEED) & 31 (equivalent to % 32)
+    
+    // int tiles_per_screen = (VIS_WIDTH / TILE_SIZE) + 2
+    mov w0, #800            // VIS_WIDTH = 800
+    mov w1, #32             // TILE_SIZE = 32
+    udiv w0, w0, w1         // VIS_WIDTH / TILE_SIZE = 25
+    add w24, w0, #2         // tiles_per_screen = 25 + 2 = 27
+    
+    // int scroll_tiles = (frame * SCROLL_SPEED) / TILE_SIZE
+    mov w0, #2              // SCROLL_SPEED = 2
+    mul w0, w20, w0         // frame * SCROLL_SPEED
+    mov w1, #32             // TILE_SIZE = 32
+    udiv w25, w0, w1        // scroll_tiles = (frame * SCROLL_SPEED) / TILE_SIZE
+    
+    // Get terrain pattern pointer
+    adrp x27, terrain_pattern@PAGE
+    add x27, x27, terrain_pattern@PAGEOFF
+    
+    mov w28, #0             // i = 0 (tile index)
+    
+.Ldraw_tile_loop:
+    cmp w28, w24            // i < tiles_per_screen?
+    b.ge .Ldraw_terrain_done
+    
+    // int terrain_idx = (scroll_tiles + i) % TERRAIN_LENGTH
+    // OPTIMIZATION: bitwise AND since TERRAIN_LENGTH=64 is power of 2
+    add w0, w25, w28        // scroll_tiles + i
+    and w0, w0, #63         // terrain_idx = (scroll_tiles + i) & 63 (equivalent to % 64)
+    
+    // Load terrain tile: terrain_tile_t terrain = terrain_pattern[terrain_idx]
+    mov w1, #8              // sizeof(terrain_tile_t) = 8
+    mul w2, w0, w1          // terrain_idx * 8
+    add x2, x27, w2, uxtw   // &terrain_pattern[terrain_idx]
+    ldr w1, [x2]            // terrain.type
+    ldr w2, [x2, #4]        // terrain.height
+    
+    // Store terrain data on stack  
+    str w1, [sp, #100]      // terrain.type
+    str w2, [sp, #104]      // terrain.height
+    
+    // int x0 = i * TILE_SIZE - offset
+    mov w0, #32             // TILE_SIZE = 32
+    mul w0, w28, w0         // i * TILE_SIZE
+    sub w0, w0, w23         // x0 = i * TILE_SIZE - offset
+    str w0, [sp, #108]      // Store x0
+    
+    // if (terrain.type == TERRAIN_GAP) continue
+    cmp w1, #4              // TERRAIN_GAP = 4
+    b.eq .Ldraw_next_tile   // Skip drawing for gaps
+    
+    // Draw tiles based on height
+    mov w0, #0              // row = 0
+    str w0, [sp, #112]      // Store row
+    
+.Ldraw_row_loop:
+    ldr w0, [sp, #112]      // Load row
+    ldr w1, [sp, #104]      // Load terrain.height
+    cmp w0, w1              // row < terrain.height?
+    b.ge .Ldraw_next_tile
+    
+    // int y0 = VIS_HEIGHT - (row + 1) * TILE_SIZE
+    add w1, w0, #1          // row + 1
+    mov w2, #32             // TILE_SIZE = 32
+    mul w1, w1, w2          // (row + 1) * TILE_SIZE
+    mov w2, #600            // VIS_HEIGHT = 600
+    sub w1, w2, w1          // y0 = VIS_HEIGHT - (row + 1) * TILE_SIZE
+    str w1, [sp, #116]      // Store y0
+    
+    // Choose which ASCII pattern to use
+    ldr w1, [sp, #100]      // terrain.type
+    ldr w2, [sp, #104]      // terrain.height
+    sub w3, w2, #1          // terrain.height - 1
+    cmp w0, w3              // row == terrain.height - 1?
+    b.ne .Ldraw_use_flat_pattern
+    
+    // Check if slope pattern should be used
+    cmp w1, #2              // TERRAIN_SLOPE_UP = 2
+    b.eq .Ldraw_use_slope_up_pattern
+    cmp w1, #3              // TERRAIN_SLOPE_DOWN = 3
+    b.eq .Ldraw_use_slope_down_pattern
+    
+.Ldraw_use_flat_pattern:
+    adrp x0, tile_flat_pattern@PAGE
+    add x0, x0, tile_flat_pattern@PAGEOFF
+    b .Ldraw_pattern_chosen
+    
+.Ldraw_use_slope_up_pattern:
+    adrp x0, tile_slope_up_pattern@PAGE
+    add x0, x0, tile_slope_up_pattern@PAGEOFF
+    b .Ldraw_pattern_chosen
+    
+.Ldraw_use_slope_down_pattern:
+    adrp x0, tile_slope_down_pattern@PAGE
+    add x0, x0, tile_slope_down_pattern@PAGEOFF
+    
+.Ldraw_pattern_chosen:
+    str x0, [sp, #124]      // Store pattern pointer
+    
+    // Draw ASCII characters from the pattern
+    // for (int ty = 0; ty < TILE_SIZE; ty += char_height)
+    mov w0, #0              // ty = 0
+    str w0, [sp, #132]      // Store ty
+    
+.Ldraw_ty_loop:
+    ldr w0, [sp, #132]      // Load ty
+    cmp w0, #32             // ty < TILE_SIZE?
+    b.ge .Ldraw_next_row
+    
+    // for (int tx = 0; tx < TILE_SIZE; tx += char_width)
+    mov w1, #0              // tx = 0
+    str w1, [sp, #136]      // Store tx
+    
+.Ldraw_tx_loop:
+    ldr w1, [sp, #136]      // Load tx
+    cmp w1, #32             // tx < TILE_SIZE?
+    b.ge .Ldraw_next_ty
+    
+    // int pattern_x = tx / char_width
+    udiv w2, w1, w21        // pattern_x = tx / char_width
+    
+    // int pattern_y = ty / char_height
+    udiv w3, w0, w22        // pattern_y = ty / char_height
+    
+    // Bounds check: pattern_x < TILE_SIZE/char_width && pattern_y < TILE_SIZE/char_height
+    mov w4, #32             // TILE_SIZE = 32
+    udiv w5, w4, w21        // TILE_SIZE / char_width = 32 / 8 = 4
+    cmp w2, w5
+    b.ge .Ldraw_next_tx
+    
+    udiv w5, w4, w22        // TILE_SIZE / char_height = 32 / 12 = 2 (rounded down)
+    cmp w3, w5
+    b.ge .Ldraw_next_tx
+    
+    // int pattern_idx = pattern_y * (TILE_SIZE/char_width) + pattern_x
+    mov w4, #32             // TILE_SIZE = 32
+    udiv w5, w4, w21        // TILE_SIZE / char_width = 4
+    mul w6, w3, w5          // pattern_y * (TILE_SIZE/char_width)
+    add w6, w6, w2          // pattern_idx = pattern_y * 4 + pattern_x
+    
+    // Bounds check: pattern_idx < TILE_SIZE * TILE_SIZE
+    mov w4, #1024           // TILE_SIZE * TILE_SIZE = 32 * 32 = 1024
+    cmp w6, w4
+    b.ge .Ldraw_next_tx
+    
+    // char c = pattern[pattern_idx]
+    ldr x4, [sp, #124]      // Load pattern pointer
+    ldrb w5, [x4, w6, uxtw] // Load character c
+    
+    // if (c != ' ') - Skip transparent characters
+    cmp w5, #' '
+    b.eq .Ldraw_check_noise
+    
+    // Calculate screen coordinates
+    // int screen_x = x0 + tx
+    ldr w6, [sp, #108]      // Load x0
+    add w6, w6, w1          // screen_x = x0 + tx
+    
+    // int screen_y = y0 + ty
+    ldr w7, [sp, #116]      // Load y0
+    add w7, w7, w0          // screen_y = y0 + ty
+    
+    // Bounds check: screen_x >= 0 && screen_x < VIS_WIDTH - char_width
+    cmp w6, #0
+    b.lt .Ldraw_next_tx
+    mov w8, #800            // VIS_WIDTH = 800
+    sub w8, w8, w21         // VIS_WIDTH - char_width = 800 - 8 = 792
+    cmp w6, w8
+    b.ge .Ldraw_next_tx
+    
+    // Bounds check: screen_y >= 0 && screen_y < VIS_HEIGHT - char_height
+    cmp w7, #0
+    b.lt .Ldraw_next_tx
+    mov w8, #600            // VIS_HEIGHT = 600
+    sub w8, w8, w22         // VIS_HEIGHT - char_height = 600 - 12 = 588
+    cmp w7, w8
+    b.ge .Ldraw_next_tx
+    
+    // Calculate dynamic color for this character
+    // uint32_t color = get_dynamic_terrain_color(terrain_type, screen_x, screen_y, frame, audio_level)
+    ldr w0, [sp, #100]      // terrain.type
+    mov w1, w6              // screen_x
+    mov w2, w7              // screen_y
+    mov w3, w20             // frame
+    ldr s0, [sp, #96]       // audio_level
+    str w5, [sp, #140]      // Save character
+    str w6, [sp, #144]      // Save screen_x
+    str w7, [sp, #148]      // Save screen_y
+    bl _get_dynamic_terrain_color_asm
+    str w0, [sp, #152]      // Save dynamic color
+    
+    // Restore values
+    ldr w5, [sp, #140]      // Restore character
+    ldr w6, [sp, #144]      // Restore screen_x  
+    ldr w7, [sp, #148]      // Restore screen_y
+    
+    // Apply glitch effects to the character
+    // char glitched_char = c (default)
+    mov w8, w5              // glitched_char = c
+    
+    // Check for matrix cascade first (overrides other effects)
+    // if (should_apply_matrix_cascade(screen_x, screen_y, frame))
+    mov w0, w6              // screen_x
+    mov w1, w7              // screen_y
+    mov w2, w20             // frame
+    str w5, [sp, #156]      // Save original character
+    str w6, [sp, #160]      // Save screen_x
+    str w7, [sp, #164]      // Save screen_y
+    str w8, [sp, #168]      // Save glitched_char
+    bl _should_apply_matrix_cascade
+    
+    cmp w0, #0
+    b.eq .Ldraw_apply_terrain_glitch
+    
+    // glitched_char = get_matrix_cascade_char(screen_x, screen_y, frame)
+    ldr w0, [sp, #160]      // screen_x
+    ldr w1, [sp, #164]      // screen_y
+    mov w2, w20             // frame
+    bl _get_matrix_cascade_char
+    str w0, [sp, #168]      // Update glitched_char
+    b .Ldraw_render_char
+    
+.Ldraw_apply_terrain_glitch:
+    // glitched_char = get_glitched_terrain_char(c, screen_x, screen_y, frame)
+    ldr w0, [sp, #156]      // original character
+    ldr w1, [sp, #160]      // screen_x
+    ldr w2, [sp, #164]      // screen_y
+    mov w3, w20             // frame
+    bl _get_glitched_terrain_char
+    str w0, [sp, #168]      // Update glitched_char
+    
+.Ldraw_render_char:
+    // draw_ascii_char(pixels, screen_x, screen_y, glitched_char, dynamic_color, 255)
+    mov x0, x19             // pixels
+    ldr w1, [sp, #160]      // screen_x
+    ldr w2, [sp, #164]      // screen_y
+    ldr w3, [sp, #168]      // glitched_char
+    ldr w4, [sp, #152]      // dynamic_color (calculated earlier)
+    mov w5, #255            // alpha = 255
+    bl _draw_ascii_char_asm
+    
+    b .Ldraw_next_tx
+    
+.Ldraw_check_noise:
+    // Even on transparent areas, occasionally show digital noise
+    // Calculate screen coordinates
+    ldr w6, [sp, #108]      // Load x0
+    add w6, w6, w1          // screen_x = x0 + tx
+    
+    ldr w7, [sp, #116]      // Load y0
+    add w7, w7, w0          // screen_y = y0 + ty
+    
+    // Bounds check (same as above)
+    cmp w6, #0
+    b.lt .Ldraw_next_tx
+    mov w8, #800            // VIS_WIDTH = 800
+    sub w8, w8, w21         // VIS_WIDTH - char_width
+    cmp w6, w8
+    b.ge .Ldraw_next_tx
+    
+    cmp w7, #0
+    b.lt .Ldraw_next_tx
+    mov w8, #600            // VIS_HEIGHT = 600
+    sub w8, w8, w22         // VIS_HEIGHT - char_height
+    cmp w7, w8
+    b.ge .Ldraw_next_tx
+    
+    // char noise_char = get_digital_noise_char(screen_x, screen_y, frame)
+    mov w0, w6              // screen_x
+    mov w1, w7              // screen_y
+    mov w2, w20             // frame
+    str w6, [sp, #172]      // Save screen_x
+    str w7, [sp, #176]      // Save screen_y
+    bl _get_digital_noise_char
+    
+    // if (noise_char != ' ')
+    cmp w0, #' '
+    b.eq .Ldraw_next_tx
+    
+    // Calculate dynamic color for noise too (using gap terrain type for variety)
+    str w0, [sp, #180]      // Save noise_char
+    mov w0, #4              // TERRAIN_GAP for noise
+    ldr w1, [sp, #172]      // screen_x
+    ldr w2, [sp, #176]      // screen_y
+    mov w3, w20             // frame
+    ldr s0, [sp, #96]       // audio_level
+    bl _get_dynamic_terrain_color_asm
+    
+    // Use dimmer dynamic color for noise: draw_ascii_char(pixels, screen_x, screen_y, noise_char, dynamic_color, 128)
+    mov w4, w0              // dynamic_color
+    ldr w3, [sp, #180]      // noise_char
+    mov x0, x19             // pixels
+    ldr w1, [sp, #172]      // screen_x
+    ldr w2, [sp, #176]      // screen_y
+    mov w5, #128            // alpha = 128 (dimmer)
+    bl _draw_ascii_char_asm
+    
+.Ldraw_next_tx:
+    ldr w1, [sp, #136]      // Load tx
+    add w1, w1, w21         // tx += char_width
+    str w1, [sp, #136]      // Store tx
+    b .Ldraw_tx_loop
+    
+.Ldraw_next_ty:
+    ldr w0, [sp, #132]      // Load ty
+    add w0, w0, w22         // ty += char_height
+    str w0, [sp, #132]      // Store ty
+    b .Ldraw_ty_loop
+    
+.Ldraw_next_row:
+    ldr w0, [sp, #112]      // Load row
+    add w0, w0, #1          // row++
+    str w0, [sp, #112]      // Store row
+    b .Ldraw_row_loop
+    
+.Ldraw_next_tile:
+    add w28, w28, #1        // i++
+    b .Ldraw_tile_loop
+    
+.Ldraw_terrain_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #160
+    ret
+
+// Compatibility wrapper for old draw_terrain_asm function
+// void draw_terrain(uint32_t *pixels, int frame)
+// Input: x0 = pixels, w1 = frame
+.global _draw_terrain_asm
+_draw_terrain_asm:
+    // Call enhanced version with default audio level
+    adr x2, .Lconst_0_5
+    ldr s0, [x2]            // audio_level = 0.5 (moderate)
+    b _draw_terrain_enhanced_asm
+
+// Constants
+.align 4
+.Lconst_magic:
+    .long 0x7E44A1          // Magic number for terrain generation
+
+// Floating point constants
+.Lconst_0_1:
+    .float 0.1
+.Lconst_0_15:
+    .float 0.15
+.Lconst_0_2:
+    .float 0.2
+.Lconst_0_3:
+    .float 0.3
+.Lconst_0_5:
+    .float 0.5
+.Lconst_0_6:
+    .float 0.6
+.Lconst_0_8:
+    .float 0.8
+.Lconst_0_9:
+    .float 0.9
+.Lconst_1_0:
+    .float 1.0
+.Lconst_100:
+    .float 100.0
+.Lconst_600:
+    .float 600.0
+.Lconst_1000:
+    .float 1000.0
+
+---END---
+

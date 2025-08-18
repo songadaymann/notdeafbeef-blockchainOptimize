@@ -1,0 +1,40 @@
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_5_C_BRIDGE]
+=============================================================
+C bridge code and build system
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_5_c_bridge
+Total files: 4
+Files included:
+  - generate_frames.c (0 bytes)
+  - simple_wav_reader.c (0 bytes)
+  - generate_nft.sh (0 bytes)
+  - Makefile (0 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: generate_frames.c ===
+---BEGIN---
+// FILE NOT FOUND: generate_frames.c
+
+---END---
+
+=== FILE: simple_wav_reader.c ===
+---BEGIN---
+// FILE NOT FOUND: simple_wav_reader.c
+
+---END---
+
+=== FILE: generate_nft.sh ===
+---BEGIN---
+// FILE NOT FOUND: generate_nft.sh
+
+---END---
+
+=== FILE: Makefile ===
+---BEGIN---
+// FILE NOT FOUND: Makefile
+
+---END---
+

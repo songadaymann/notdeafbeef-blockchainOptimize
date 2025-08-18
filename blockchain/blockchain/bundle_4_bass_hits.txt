@@ -1,0 +1,19 @@
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_4_BASS_HITS]
+=============================================================
+Bass hits and shape system (largest file)
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_4_bass_hits
+Total files: 1
+Files included:
+  - visual/bass_hits.s (0 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: visual/bass_hits.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/bass_hits.s
+
+---END---
+

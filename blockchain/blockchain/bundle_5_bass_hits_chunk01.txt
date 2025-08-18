@@ -1,0 +1,618 @@
+[CHUNK 1 OF 3]
+BUNDLE_5_BASS_HITS - PART 1
+Concatenate all chunks in order to reconstruct.
+
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_5_BASS_HITS]
+=============================================================
+Bass hits and shape system (largest file)
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_5_bass_hits
+Total files: 1
+Files included:
+  - visual/bass_hits.s (61657 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: visual/bass_hits.s ===
+---BEGIN---
+.section __TEXT,__text,regular,pure_instructions
+.align 2
+
+// External function declarations
+.extern _get_glitched_shape_char
+.extern _draw_ascii_char_asm
+.extern _cosf
+.extern _sinf
+
+// Bass hit data structures
+.section __DATA,__data
+.align 5
+
+// Bass hit array - 16 hits * 32 bytes each = 512 bytes
+// bass_hit_t structure layout:
+// - shape_type: 4 bytes (bass_shape_type_t enum)
+// - color: 4 bytes (color_t struct: r,g,b,a)
+// - alpha: 4 bytes (int)
+// - scale: 4 bytes (float)
+// - max_size: 4 bytes (float)
+// - rotation: 4 bytes (float)
+// - rot_speed: 4 bytes (float)
+// - active: 4 bytes (bool padded to 4)
+// Total: 32 bytes per bass_hit_t
+bass_hits_array:
+    .space (16 * 32), 0     // MAX_BASS_HITS * sizeof(bass_hit_t)
+
+bass_hits_initialized:
+    .space 1, 0             // bool
+
+last_bass_step:
+    .space 4, 0             // int
+
+// OPTIMIZATION: Trig lookup tables (256 entries each, 1KB total)
+// sin/cos values for angles 0 to 2π with linear interpolation
+.align 4
+sin_lut:
+    .float 0.000000, 0.024541, 0.049068, 0.073565, 0.098017, 0.122411, 0.146730, 0.170962
+    .float 0.195090, 0.219101, 0.242980, 0.266713, 0.290285, 0.313682, 0.336890, 0.359895
+    .float 0.382683, 0.405241, 0.427555, 0.449611, 0.471397, 0.492898, 0.514103, 0.534998
+    .float 0.555570, 0.575808, 0.595699, 0.615232, 0.634393, 0.653173, 0.671559, 0.689541
+    .float 0.707107, 0.724247, 0.740951, 0.757209, 0.773010, 0.788346, 0.803208, 0.817585
+    .float 0.831470, 0.844854, 0.857729, 0.870087, 0.881921, 0.893224, 0.903989, 0.914210
+    .float 0.923880, 0.932993, 0.941544, 0.949528, 0.956940, 0.963776, 0.970031, 0.975702
+    .float 0.980785, 0.985278, 0.989177, 0.992480, 0.995185, 0.997290, 0.998795, 0.999699
+    .float 1.000000, 0.999699, 0.998795, 0.997290, 0.995185, 0.992480, 0.989177, 0.985278
+    .float 0.980785, 0.975702, 0.970031, 0.963776, 0.956940, 0.949528, 0.941544, 0.932993
+    .float 0.923880, 0.914210, 0.903989, 0.893224, 0.881921, 0.870087, 0.857729, 0.844854
+    .float 0.831470, 0.817585, 0.803208, 0.788346, 0.773010, 0.757209, 0.740951, 0.724247
+    .float 0.707107, 0.689541, 0.671559, 0.653173, 0.634393, 0.615232, 0.595699, 0.575808
+    .float 0.555570, 0.534998, 0.514103, 0.492898, 0.471397, 0.449611, 0.427555, 0.405241
+    .float 0.382683, 0.359895, 0.336890, 0.313682, 0.290285, 0.266713, 0.242980, 0.219101
+    .float 0.195090, 0.170962, 0.146730, 0.122411, 0.098017, 0.073565, 0.049068, 0.024541
+    .float 0.000000, -0.024541, -0.049068, -0.073565, -0.098017, -0.122411, -0.146730, -0.170962
+    .float -0.195090, -0.219101, -0.242980, -0.266713, -0.290285, -0.313682, -0.336890, -0.359895
+    .float -0.382683, -0.405241, -0.427555, -0.449611, -0.471397, -0.492898, -0.514103, -0.534998
+    .float -0.555570, -0.575808, -0.595699, -0.615232, -0.634393, -0.653173, -0.671559, -0.689541
+    .float -0.707107, -0.724247, -0.740951, -0.757209, -0.773010, -0.788346, -0.803208, -0.817585
+    .float -0.831470, -0.844854, -0.857729, -0.870087, -0.881921, -0.893224, -0.903989, -0.914210
+    .float -0.923880, -0.932993, -0.941544, -0.949528, -0.956940, -0.963776, -0.970031, -0.975702
+    .float -0.980785, -0.985278, -0.989177, -0.992480, -0.995185, -0.997290, -0.998795, -0.999699
+    .float -1.000000, -0.999699, -0.998795, -0.997290, -0.995185, -0.992480, -0.989177, -0.985278
+    .float -0.980785, -0.975702, -0.970031, -0.963776, -0.956940, -0.949528, -0.941544, -0.932993
+    .float -0.923880, -0.914210, -0.903989, -0.893224, -0.881921, -0.870087, -0.857729, -0.844854
+    .float -0.831470, -0.817585, -0.803208, -0.788346, -0.773010, -0.757209, -0.740951, -0.724247
+    .float -0.707107, -0.689541, -0.671559, -0.653173, -0.634393, -0.615232, -0.595699, -0.575808
+    .float -0.555570, -0.534998, -0.514103, -0.492898, -0.471397, -0.449611, -0.427555, -0.405241
+    .float -0.382683, -0.359895, -0.336890, -0.313682, -0.290285, -0.266713, -0.242980, -0.219101
+    .float -0.195090, -0.170962, -0.146730, -0.122411, -0.098017, -0.073565, -0.049068, -0.024541
+
+cos_lut:
+    .float 1.000000, 0.999699, 0.998795, 0.997290, 0.995185, 0.992480, 0.989177, 0.985278
+    .float 0.980785, 0.975702, 0.970031, 0.963776, 0.956940, 0.949528, 0.941544, 0.932993
+    .float 0.923880, 0.914210, 0.903989, 0.893224, 0.881921, 0.870087, 0.857729, 0.844854
+    .float 0.831470, 0.817585, 0.803208, 0.788346, 0.773010, 0.757209, 0.740951, 0.724247
+    .float 0.707107, 0.689541, 0.671559, 0.653173, 0.634393, 0.615232, 0.595699, 0.575808
+    .float 0.555570, 0.534998, 0.514103, 0.492898, 0.471397, 0.449611, 0.427555, 0.405241
+    .float 0.382683, 0.359895, 0.336890, 0.313682, 0.290285, 0.266713, 0.242980, 0.219101
+    .float 0.195090, 0.170962, 0.146730, 0.122411, 0.098017, 0.073565, 0.049068, 0.024541
+    .float 0.000000, -0.024541, -0.049068, -0.073565, -0.098017, -0.122411, -0.146730, -0.170962
+    .float -0.195090, -0.219101, -0.242980, -0.266713, -0.290285, -0.313682, -0.336890, -0.359895
+    .float -0.382683, -0.405241, -0.427555, -0.449611, -0.471397, -0.492898, -0.514103, -0.534998
+    .float -0.555570, -0.575808, -0.595699, -0.615232, -0.634393, -0.653173, -0.671559, -0.689541
+    .float -0.707107, -0.724247, -0.740951, -0.757209, -0.773010, -0.788346, -0.803208, -0.817585
+    .float -0.831470, -0.844854, -0.857729, -0.870087, -0.881921, -0.893224, -0.903989, -0.914210
+    .float -0.923880, -0.932993, -0.941544, -0.949528, -0.956940, -0.963776, -0.970031, -0.975702
+    .float -0.980785, -0.985278, -0.989177, -0.992480, -0.995185, -0.997290, -0.998795, -0.999699
+    .float -1.000000, -0.999699, -0.998795, -0.997290, -0.995185, -0.992480, -0.989177, -0.985278
+    .float -0.980785, -0.975702, -0.970031, -0.963776, -0.956940, -0.949528, -0.941544, -0.932993
+    .float -0.923880, -0.914210, -0.903989, -0.893224, -0.881921, -0.870087, -0.857729, -0.844854
+    .float -0.831470, -0.817585, -0.803208, -0.788346, -0.773010, -0.757209, -0.740951, -0.724247
+    .float -0.707107, -0.689541, -0.671559, -0.653173, -0.634393, -0.615232, -0.595699, -0.575808
+    .float -0.555570, -0.534998, -0.514103, -0.492898, -0.471397, -0.449611, -0.427555, -0.405241
+    .float -0.382683, -0.359895, -0.336890, -0.313682, -0.290285, -0.266713, -0.242980, -0.219101
+    .float -0.195090, -0.170962, -0.146730, -0.122411, -0.098017, -0.073565, -0.049068, -0.024541
+
+.section __TEXT,__text,regular,pure_instructions
+
+// Initialize bass hit system
+// void init_bass_hits(void)
+.global _init_bass_hits_asm
+_init_bass_hits_asm:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    
+    // Check if already initialized
+    adrp x0, bass_hits_initialized@PAGE
+    add x0, x0, bass_hits_initialized@PAGEOFF
+    ldrb w1, [x0]
+    cmp w1, #0
+    b.ne .Linit_bass_done   // Return if already initialized
+    
+    // Get bass hits array pointer
+    adrp x1, bass_hits_array@PAGE
+    add x1, x1, bass_hits_array@PAGEOFF
+    
+    // Initialize all bass hits as inactive
+    mov w2, #0              // i = 0
+.Linit_bass_loop:
+    cmp w2, #16             // MAX_BASS_HITS = 16
+    b.ge .Linit_bass_set_flag
+    
+    // Calculate offset: bass_hits[i].active = false
+    mov w3, #32             // sizeof(bass_hit_t) = 32
+    mul w4, w2, w3          // i * 32
+    add w4, w4, #28         // offset to 'active' field (last 4 bytes)
+    mov w5, #0              // false = 0
+    str w5, [x1, w4, uxtw]  // Store active = false
+    
+    add w2, w2, #1          // i++
+    b .Linit_bass_loop
+    
+.Linit_bass_set_flag:
+    // Set initialized flag
+    mov w1, #1
+    strb w1, [x0]           // bass_hits_initialized = true
+    
+.Linit_bass_done:
+    ldp x29, x30, [sp], #16
+    ret
+
+// Reset bass hit step tracking
+// void reset_bass_hit_step_tracking(void)
+.global _reset_bass_hit_step_tracking_asm
+_reset_bass_hit_step_tracking_asm:
+    // last_bass_step = -1
+    adrp x0, last_bass_step@PAGE
+    add x0, x0, last_bass_step@PAGEOFF
+    mov w1, #-1
+    str w1, [x0]
+    ret
+
+// Helper function to get bass hits array pointer
+// bass_hit_t* get_bass_hits_ptr_asm(void)
+.global _get_bass_hits_ptr_asm
+_get_bass_hits_ptr_asm:
+    adrp x0, bass_hits_array@PAGE
+    add x0, x0, bass_hits_array@PAGEOFF
+    ret
+
+// Helper function to get last bass step pointer
+// int* get_last_bass_step_ptr_asm(void)
+.global _get_last_bass_step_ptr_asm
+_get_last_bass_step_ptr_asm:
+    adrp x0, last_bass_step@PAGE
+    add x0, x0, last_bass_step@PAGEOFF
+    ret
+
+// Helper function to get bass hits initialized flag pointer
+// bool* get_bass_hits_initialized_ptr_asm(void)
+.global _get_bass_hits_initialized_ptr_asm
+_get_bass_hits_initialized_ptr_asm:
+    adrp x0, bass_hits_initialized@PAGE
+    add x0, x0, bass_hits_initialized@PAGEOFF
+    ret
+
+// Create a new bass hit
+// static void spawn_bass_hit(float base_hue, uint32_t seed)
+// Input: s0 = base_hue (float), w0 = seed (uint32_t)
+.global _spawn_bass_hit_asm
+_spawn_bass_hit_asm:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    str s0, [sp, #64]       // Save base_hue
+    str w0, [sp, #68]       // Save seed
+    
+    // Get bass hits array pointer
+    adrp x19, bass_hits_array@PAGE
+    add x19, x19, bass_hits_array@PAGEOFF
+    
+    // Find free slot
+    mov w20, #-1            // slot = -1
+    mov w21, #0             // i = 0
+    
+.Lspawn_find_slot:
+    cmp w21, #16            // MAX_BASS_HITS = 16
+    b.ge .Lspawn_check_slot
+    
+    // Check if bass_hits[i].active == false
+    mov w22, #32            // sizeof(bass_hit_t) = 32
+    mul w23, w21, w22       // i * 32
+    add w23, w23, #28       // offset to 'active' field
+    ldr w24, [x19, w23, uxtw] // Load active flag
+    
+    cmp w24, #0             // active == false
+    b.ne .Lspawn_next_slot
+    
+    // Found free slot
+    mov w20, w21            // slot = i
+    b .Lspawn_check_slot
+    
+.Lspawn_next_slot:
+    add w21, w21, #1        // i++
+    b .Lspawn_find_slot
+    
+.Lspawn_check_slot:
+    cmp w20, #-1            // if (slot == -1)
+    b.eq .Lspawn_done       // return (no free slots)
+    
+    // Get pointer to bass_hits[slot]
+    mov w22, #32            // sizeof(bass_hit_t)
+    mul w23, w20, w22       // slot * 32
+    add x21, x19, w23, uxtw // hit = &bass_hits[slot]
+    
+    // srand(seed + slot)
+    ldr w0, [sp, #68]       // Load seed
+    add w0, w0, w20         // seed + slot
+    bl _srand
+    
+    // Choose random shape type: shape_types[rand() % 5]
+    bl _rand
+    mov w1, #5
+    udiv w2, w0, w1         // w2 = rand() / 5
+    msub w22, w2, w1, w0    // w22 = rand() % 5 = shape_type
+    
+    // Store shape_type: hit->shape_type = shape_type
+    str w22, [x21]          // Store at offset 0
+    
+    // Generate color with hue shift
+    // float hue_shift = ((rand() / (float)RAND_MAX) - 0.5f) * 0.4f
+    bl _rand
+    ucvtf s1, w0            // Convert rand() to float
+    
+    // Load RAND_MAX constant (2147483647 = 0x7FFFFFFF)
+    adr x0, .Lconst_rand_max
+    ldr s2, [x0]            // s2 = RAND_MAX as float
+    fdiv s1, s1, s2         // s1 = rand() / RAND_MAX
+    
+    adr x0, .Lconst_0_5
+    ldr s2, [x0]            // s2 = 0.5f
+    fsub s1, s1, s2         // s1 = (rand() / RAND_MAX) - 0.5f
+    
+    adr x0, .Lconst_0_4
+    ldr s2, [x0]            // s2 = 0.4f
+    fmul s1, s1, s2         // s1 = hue_shift = ((rand() / RAND_MAX) - 0.5f) * 0.4f
+    
+    // hsv_t hit_hsv = {fmod(base_hue + hue_shift, 1.0f), 1.0f, 1.0f}
+    ldr s0, [sp, #64]       // Load base_hue
+    fadd s0, s0, s1         // base_hue + hue_shift
+    
+    // fmod(base_hue + hue_shift, 1.0f)
+    adr x0, .Lconst_1_0
+    ldr s2, [x0]            // s2 = 1.0f
+    fdiv s3, s0, s2         // s3 = (base_hue + hue_shift) / 1.0f
+    fcvtms w0, s3           // w0 = floor(division)
+    scvtf s3, w0            // s3 = floor as float
+    fmsub s0, s3, s2, s0    // s0 = fmod result
+    
+    // Create HSV struct on stack: {h, s, v}
+    str s0, [sp, #72]       // h = fmod result
+    adr x0, .Lconst_1_0
+    ldr s1, [x0]            // s = 1.0f
+    str s1, [sp, #76]       // s = 1.0f
+    str s1, [sp, #80]       // v = 1.0f (reuse same constant)
+    
+    // Convert HSV to RGB: hit->color = hsv_to_rgb(hit_hsv)
+    add x0, sp, #72         // pointer to HSV struct
+    add x1, x21, #4         // pointer to hit->color (offset 4)
+    bl _hsv_to_rgb
+    
+    // Set initial properties
+    // hit->alpha = 255
+    mov w0, #255
+    str w0, [x21, #8]       // Store at offset 8
+    
+    // hit->scale = 0.1f
+    adr x0, .Lconst_0_1
+    ldr s0, [x0]
+    str s0, [x21, #12]      // Store at offset 12
+    
+    // hit->max_size = (VIS_WIDTH < VIS_HEIGHT ? VIS_WIDTH : VIS_HEIGHT) * 0.6f
+    mov w0, #800            // VIS_WIDTH
+    mov w1, #600            // VIS_HEIGHT
+    cmp w0, w1
+    csel w0, w0, w1, lo     // w0 = min(VIS_WIDTH, VIS_HEIGHT) = 600
+    ucvtf s0, w0            // Convert to float
+    adr x1, .Lconst_0_6
+    ldr s1, [x1]            // s1 = 0.6f
+    fmul s0, s0, s1         // s0 = min_dimension * 0.6f
+    str s0, [x21, #16]      // Store max_size at offset 16
+    
+    // hit->rotation = 0.0f
+    fmov s0, wzr            // s0 = 0.0f
+    str s0, [x21, #20]      // Store at offset 20
+    
+    // hit->rot_speed = ((rand() / (float)RAND_MAX) - 0.5f) * 0.1f
+    bl _rand
+    ucvtf s0, w0            // Convert rand() to float
+    adr x0, .Lconst_rand_max
+    ldr s1, [x0]            // s1 = RAND_MAX
+    fdiv s0, s0, s1         // s0 = rand() / RAND_MAX
+    adr x0, .Lconst_0_5
+    ldr s1, [x0]            // s1 = 0.5f
+    fsub s0, s0, s1         // s0 = (rand() / RAND_MAX) - 0.5f
+    adr x0, .Lconst_0_1
+    ldr s1, [x0]            // s1 = 0.1f
+    fmul s0, s0, s1         // s0 = rot_speed
+    str s0, [x21, #24]      // Store at offset 24
+    
+    // hit->active = true
+    mov w0, #1
+    str w0, [x21, #28]      // Store at offset 28
+    
+.Lspawn_done:
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// Fast sine lookup using 256-entry table
+// Input: s0 = angle (radians), Output: s0 = sin(angle)
+.global _sin_lut_asm
+_sin_lut_asm:
+    // Convert angle to table index: index = (angle / (2*π)) * 256
+    adr x1, .Lconst_2pi_inv
+    ldr s1, [x1]            // 1/(2π) = 0.159155
+    fmul s1, s0, s1         // angle / (2π)
+    adr x1, .Lconst_256
+    ldr s2, [x1]            // 256.0
+    fmul s1, s1, s2         // * 256
+    fcvtms w1, s1           // index = floor(angle_norm * 256)
+    and w1, w1, #255        // index &= 255 (wrap around)
+    
+    // Load from sin LUT
+    adrp x2, sin_lut@PAGE
+    add x2, x2, sin_lut@PAGEOFF
+    lsl w1, w1, #2          // index * 4 (float size)
+    ldr s0, [x2, w1, uxtw]  // sin_lut[index]
+    ret
+
+// Fast cosine lookup using 256-entry table  
+// Input: s0 = angle (radians), Output: s0 = cos(angle)
+.global _cos_lut_asm
+_cos_lut_asm:
+    // Convert angle to table index: index = (angle / (2*π)) * 256
+    adr x1, .Lconst_2pi_inv
+    ldr s1, [x1]            // 1/(2π) = 0.159155
+    fmul s1, s0, s1         // angle / (2π)
+    adr x1, .Lconst_256
+    ldr s2, [x1]            // 256.0
+    fmul s1, s1, s2         // * 256
+    fcvtms w1, s1           // index = floor(angle_norm * 256)
+    and w1, w1, #255        // index &= 255 (wrap around)
+    
+    // Load from cos LUT
+    adrp x2, cos_lut@PAGE
+    add x2, x2, cos_lut@PAGEOFF
+    lsl w1, w1, #2          // index * 4 (float size)
+    ldr s0, [x2, w1, uxtw]  // cos_lut[index]
+    ret
+
+// Floating point constants
+.align 4
+.Lconst_2pi_inv:
+    .float 0.159155         // 1/(2π) for angle normalization
+.Lconst_256:
+    .float 256.0            // LUT size
+.Lconst_rand_max:
+    .float 2147483647.0     // RAND_MAX as float
+.Lconst_0_5:
+    .float 0.5
+.Lconst_0_4:
+    .float 0.4
+.Lconst_1_0:
+    .float 1.0
+.Lconst_0_1:
+    .float 0.1
+.Lconst_0_6:
+    .float 0.6
+
+// Draw ASCII hexagon
+// void draw_ascii_hexagon(uint32_t *pixels, int cx, int cy, int size, float rotation, uint32_t color, int alpha, int frame)
+// Input: x0=pixels, w1=cx, w2=cy, w3=size, s0=rotation, w4=color, w5=alpha, w6=frame
+.global _draw_ascii_hexagon_asm
+_draw_ascii_hexagon_asm:
+    stp x29, x30, [sp, #-112]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    
+    // Check size threshold
+    cmp w3, #8
+    b.lt .Lhex_done         // return if size < 8
+    
+    // Save all parameters to dedicated registers (no more w1-w6 reuse)
+    mov x19, x0             // pixels pointer  
+    mov w20, w1             // cx
+    mov w21, w2             // cy  
+    mov w22, w3             // size
+    str s0, [sp, #96]       // rotation (on stack)
+    mov w23, w4             // color
+    mov w24, w5             // alpha
+    mov w25, w6             // frame
+    
+    // Loop counter in dedicated register
+    mov w26, #0             // i = 0 (dedicated loop counter)
+    
+    // for (int i = 0; i < 6; i++)
+.Lhex_loop:
+    cmp w26, #6
+    b.ge .Lhex_done
+    
+    // float angle = rotation + i * M_PI / 3.0f
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_pi_3    // M_PI / 3.0f ≈ 1.047198
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (M_PI / 3.0f)
+    
+    // int x = cx + (int)(cosf(angle) * size * 0.7f)  
+    // OPTIMIZATION: Use lookup table instead of libm cosf
+    bl _cos_lut_asm         // s0 = cos(angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // cos(angle) * size
+    adr x0, .Lconst_0_7     
+    ldr s1, [x0]            // 0.7f
+    fmul s0, s0, s1         // cos(angle) * size * 0.7f
+    fcvtns w27, s0          // Convert to int, store in w27
+    add w27, w20, w27       // x = cx + result
+    
+    // int y = cy + (int)(sinf(angle) * size * 0.7f)  
+    // Recalculate angle since cosf modified s0
+    scvtf s1, w26           // Convert i to float
+    adr x0, .Lconst_pi_3    
+    ldr s2, [x0]
+    fmul s1, s1, s2         // i * (M_PI / 3.0f)
+    ldr s0, [sp, #96]       // Load rotation
+    fadd s0, s0, s1         // angle = rotation + i * (M_PI / 3.0f)
+    
+    // OPTIMIZATION: Use lookup table instead of libm sinf
+    bl _sin_lut_asm         // s0 = sin(angle) from LUT
+    scvtf s1, w22           // Convert size to float
+    fmul s0, s0, s1         // sin(angle) * size
+    adr x0, .Lconst_0_7
+    ldr s1, [x0]            // 0.7f
+    fmul s0, s0, s1         // sin(angle) * size * 0.7f
+    fcvtns w28, s0          // Convert to int, store in w28
+    add w28, w21, w28       // y = cy + result
+    
+    // char base_char = hex_chars[i % char_count]
+    mov w0, #6              // char_count = 6
+    udiv w1, w26, w0        // w1 = i / 6
+    msub w0, w1, w0, w26    // w0 = i % 6
+    adr x1, .Lhex_chars
+    ldrb w0, [x1, w0, uxtw] // Load hex_chars[i % 6]
+    
+    // char glitched_char = get_glitched_shape_char(base_char, x, y, frame)
+    // w0 already has base_char
+    mov w1, w27             // x  
+    mov w2, w28             // y
+    mov w3, w25             // frame
+    bl _get_glitched_shape_char
+    // Result in w0 = glitched_char
+    
+    // draw_ascii_char(pixels, x, y, glitched_char, color, alpha)
+    // w0 already has glitched_char, need to set up all parameters
+    mov w3, w0              // glitched_char
+    mov x0, x19             // pixels
+    mov w1, w27             // x
+    mov w2, w28             // y
+    mov w4, w23             // color
+    mov w5, w24             // alpha
+    bl _draw_ascii_char_asm
+    
+    // Increment loop counter
+    add w26, w26, #1        // i++
+    b .Lhex_loop
+    
+.Lhex_done:
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #112
+    ret
+
+// Draw ASCII square  
+// void draw_ascii_square(uint32_t *pixels, int cx, int cy, int size, float rotation, uint32_t color, int alpha, int frame)
+// Input: x0=pixels, w1=cx, w2=cy, w3=size, s0=rotation, w4=color, w5=alpha, w6=frame
+.global _draw_ascii_square_asm
+_draw_ascii_square_asm:
+    stp x29, x30, [sp, #-160]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    
+    // Check size threshold
+    cmp w3, #8
+    b.lt .Lsquare_done      // return if size < 8
+    
+    // Save all parameters to dedicated registers
+    mov x19, x0             // pixels pointer  
+    mov w20, w1             // cx
+    mov w21, w2             // cy  
+    mov w22, w3             // size (half)
+    str s0, [sp, #96]       // rotation (on stack)
+    mov w23, w4             // color
+    mov w24, w5             // alpha
+    mov w25, w6             // frame
+    
+    // Calculate initial corners (before rotation)
+    // corners[4][2] = {{cx-half, cy-half}, {cx+half, cy-half}, {cx+half, cy+half}, {cx-half, cy+half}}
+    sub w0, w20, w22        // cx - half
+    sub w1, w21, w22        // cy - half
+    stp w0, w1, [sp, #104]  // Store corner 0: top-left
+    
+    add w0, w20, w22        // cx + half  
+    sub w1, w21, w22        // cy - half
+    stp w0, w1, [sp, #112]  // Store corner 1: top-right
+    
+    add w0, w20, w22        // cx + half
+    add w1, w21, w22        // cy + half  
+    stp w0, w1, [sp, #120]  // Store corner 2: bottom-right
+    
+    sub w0, w20, w22        // cx - half
+    add w1, w21, w22        // cy + half
+    stp w0, w1, [sp, #128]  // Store corner 3: bottom-left
+    
+    // Apply rotation to corners and draw them
+    mov w26, #0             // i = 0 (corner index)
+    
+.Lsquare_corner_loop:
+    cmp w26, #4
+    b.ge .Lsquare_edges     // Done with corners, now draw edges
+    
+    // Load corner coordinates
+    mov w0, #8              // 8 bytes per corner (2 ints)
+    mul w0, w26, w0         // i * 8
+    add w0, w0, #104        // offset to corners array
+    add x1, sp, w0, uxtw    // address of corners[i]
+    ldp w27, w28, [x1]      // Load corners[i][0], corners[i][1]
+    
+    // Calculate dx = corners[i][0] - cx, dy = corners[i][1] - cy
+    sub w0, w27, w20        // dx = corners[i][0] - cx
+    sub w1, w28, w21        // dy = corners[i][1] - cy
+    scvtf s0, w0            // dx as float
+    scvtf s1, w1            // dy as float
+    
+    // Rotate: rotated_x = dx * cos(rotation) - dy * sin(rotation)
+    //         rotated_y = dx * sin(rotation) + dy * cos(rotation)
+    ldr s2, [sp, #96]       // Load rotation
+    
+    // Calculate cos(rotation)
+    fmov s3, s2             // Copy rotation for cos call
+    bl _cos_lut_asm         // s0 = cos(rotation) from LUT
+    fmov s4, s0             // Save cos result in s4
+    
+    // Calculate sin(rotation)  
+    ldr s2, [sp, #96]       // Reload rotation
+    fmov s0, s2             // Set up for sin call
+    bl _sin_lut_asm         // s0 = sin(rotation) from LUT
+    fmov s5, s0             // Save sin result in s5
+    
+    // Now compute rotated coordinates
+    // rotated_x = dx * cos(rotation) - dy * sin(rotation)
+    fmul s6, s0, s4         // dx * cos(rotation)  -- wait, s0 is sin result, need to reload dx
+    // Let me reload dx, dy
+    sub w0, w27, w20        // dx = corners[i][0] - cx
+    sub w1, w28, w21        // dy = corners[i][1] - cy  
+    scvtf s0, w0            // dx as float
+    scvtf s1, w1            // dy as float
+    
+    fmul s6, s0, s4         // dx * cos(rotation)
+    fmul s7, s1, s5         // dy * sin(rotation)
+    fsub s6, s6, s7         // rotated_x = dx * cos - dy * sin
+    
+    // rotated_y = dx * sin(rotation) + dy * cos

@@ -1,0 +1,19 @@
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_1_GENERATOR]
+=============================================================
+Main audio generator (large file)
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_1_generator
+Total files: 1
+Files included:
+  - audio/generator.s (0 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: audio/generator.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/active/generator.s
+
+---END---
+

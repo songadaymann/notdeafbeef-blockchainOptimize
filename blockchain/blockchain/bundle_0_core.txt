@@ -1,0 +1,876 @@
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_0_CORE]
+=============================================================
+Core system: seed + build instructions + small audio voices
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_0_core
+Total files: 7
+Files included:
+  - seed.s (1382 bytes)
+  - audio/kick.s (2454 bytes)
+  - audio/snare.s (3705 bytes)
+  - audio/hat.s (2961 bytes)
+  - audio/melody.s (3721 bytes)
+  - audio/delay.s (2904 bytes)
+  - audio/limiter.s (4222 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: seed.s ===
+---BEGIN---
+; NotDeafBeef - Transaction Hash Seed Placeholder
+; ==================================================
+; This file contains the token's unique seed that drives all generation.
+; 
+; INSTRUCTIONS FOR USERS:
+; 1. Get your token's seed: call getTokenParams(tokenId) on the contract
+; 2. Replace the SEED_HEX string below with your 64-character hex seed
+; 3. Keep the "0x" prefix and quotes
+; 4. Compile and run the complete pipeline
+;
+; The seed determines ALL audio and visual characteristics of your NFT.
+; Same seed = identical NFT every time (deterministic generation).
+
+.section __DATA,__data
+.align 3
+
+; REPLACE THIS LINE: paste your token's 64-character hex seed here
+; Example: SEED_HEX: .ascii "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\0"
+SEED_HEX: .ascii "PASTE_YOUR_TOKEN_SEED_HERE_FROM_CONTRACT_getTokenParams\0"
+
+; Alternative format: 32 bytes as 4 64-bit values (little-endian)
+; Users can choose either hex string above OR replace these 4 lines:
+.global SEED_BYTES
+SEED_BYTES:
+    .quad 0x0000000000000000  ; bytes 0-7   - REPLACE WITH TOKEN SEED
+    .quad 0x0000000000000000  ; bytes 8-15  - REPLACE WITH TOKEN SEED  
+    .quad 0x0000000000000000  ; bytes 16-23 - REPLACE WITH TOKEN SEED
+    .quad 0x0000000000000000  ; bytes 24-31 - REPLACE WITH TOKEN SEED
+
+; Export symbols for use by other assembly files
+.global SEED_HEX
+.global SEED_BYTES
+
+---END---
+
+=== FILE: audio/kick.s ===
+---BEGIN---
+	.text
+	.align 2
+	.globl _kick_process
+
+// --- Constants ---
+AMP_const:
+    .float 0.9            // overall amplitude (reduced from 1.2 - was too loud)
+
+// Offsets inside kick_t struct (see kick.h)
+.equ K_SR,         0     // float sr
+.equ K_POS,        4     // uint32 pos
+.equ K_LEN,        8     // uint32 len
+.equ K_ENV,        12    // float env
+.equ K_ENV_COEF,   16    // float env_coef
+.equ K_Y_PREV,     28    // float y_prev (sin(theta[n-1]))
+.equ K_Y_PREV2,    32    // float y_prev2 (sin(theta[n-2]))
+.equ K_K1,         36    // float k1 = 2*cos(delta)
+
+// void kick_process(kick_t *k, float *L, float *R, uint32_t n)
+// x0 = kick*, x1 = L*, x2 = R*, w3 = n
+_kick_process:
+    // Prologue (minimal – leaf function, no lib calls)
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    // Preserve callee-saved x22 (used as loop counter)
+    str x22, [sp, #-16]!
+
+    // early-out: inactive or n==0
+    ldr w9, [x0, #K_POS]
+    ldr w10,[x0, #K_LEN]
+    cmp w9, w10
+    b.ge Ldone          // pos >= len
+    cbz w3, Ldone       // n==0
+
+    // Load state into FP regs
+    ldr s4,  [x0, #K_ENV]       // env
+    ldr s5,  [x0, #K_ENV_COEF]  // env_coef
+    ldr s6,  [x0, #K_Y_PREV]    // y_prev
+    ldr s7,  [x0, #K_Y_PREV2]   // y_prev2
+    ldr s8,  [x0, #K_K1]        // k1 = 2*cos(delta)
+
+    // Load AMP constant once
+    adrp x11, AMP_const@PAGE
+    add  x11, x11, AMP_const@PAGEOFF
+    ldr  s15, [x11]
+
+    mov w22, wzr                // i counter
+
+Lloop:
+    // Check end conditions
+    cmp w22, w3
+    b.ge Lend
+    cmp w9, w10
+    b.ge Lend
+
+    // env *= env_coef
+    fmul s4, s4, s5
+
+    // y = k1*y_prev - y_prev2  (use s9 temps)
+    fmul s9, s8, s6     // k1*y_prev
+    fsub s9, s9, s7     // - y_prev2 -> y
+
+    // sample = env * y * AMP
+    fmul s0, s4, s9
+    fmul s0, s0, s15
+
+    // L[i] += sample
+    ldr s1, [x1, w22, sxtw #2]
+    fadd s1, s1, s0
+    str s1, [x1, w22, sxtw #2]
+
+    // R[i] += sample
+    ldr s2, [x2, w22, sxtw #2]
+    fadd s2, s2, s0
+    str s2, [x2, w22, sxtw #2]
+
+    // Update sine recurrence state
+    fmov s7, s6         // y_prev2 = old y_prev
+    fmov s6, s9         // y_prev  = y
+
+    // Increment counters
+    add w9, w9, #1      // pos++
+    add w22, w22, #1    // i++
+    b   Lloop
+
+Lend:
+    // Store back updated state
+    str s4,  [x0, #K_ENV]
+    str s6,  [x0, #K_Y_PREV]
+    str s7,  [x0, #K_Y_PREV2]
+    str w9,  [x0, #K_POS]
+
+Ldone:
+    ldr x22, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret 
+---END---
+
+=== FILE: audio/snare.s ===
+---BEGIN---
+	.text
+	.align 2
+	.globl _snare_process
+
+// Lightweight Snare – envelope recurrence + inline SplitMix64 noise
+//   void snare_process(snare_t *s, float *L, float *R, uint32_t n)
+//     x0 = snare_t*
+//     x1 = L buffer
+//     x2 = R buffer
+//     w3 = n samples
+//
+// snare_t layout (see snare.h)
+//   uint32_t pos        @ 0
+//   uint32_t len        @ 4
+//   float    sr         @ 8   (unused here)
+//   float    env        @ 12
+//   float    env_coef   @ 16
+//   <padding>           @ 20
+//   uint64_t rng.state  @ 24
+
+// --- Struct Offsets ---
+.equ S_POS,        0
+.equ S_LEN,        4
+.equ S_ENV,       12
+.equ S_ENV_COEF,  16
+.equ S_RNG_STATE, 24
+
+// --- Constants ---
+AMP_const:
+    .float 0.4                    // overall amplitude
+
+floats_inv24_two_one:
+    .float 5.9604644775390625e-8  // 1/2^24
+    .float 2.0
+    .float 1.0
+
+rng64_consts:
+    .quad 0x9E3779B97F4A7C15      // GAMMA
+    .quad 0xBF58476D1CE4E5B9      // MUL1
+    .quad 0x94D049BB133111EB      // MUL2
+
+// ------------------------------------------------------------
+// Main routine
+// ------------------------------------------------------------
+_snare_process:
+    // Prologue (leaf function ‑ minimal stack)
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    // Save callee-saved x22 which we use as loop counter
+    str x22, [sp, #-16]!
+
+    // Early exit if inactive or n==0
+    ldr w8, [x0, #S_POS]   // pos
+    ldr w9, [x0, #S_LEN]   // len
+    cmp w8, w9
+    b.ge Ldone             // already finished
+    cbz w3, Ldone          // n == 0
+
+    // Load mutable state
+    ldr s4,  [x0, #S_ENV]        // env
+    ldr s5,  [x0, #S_ENV_COEF]   // env_coef
+    ldr x10, [x0, #S_RNG_STATE]  // rng.state
+
+    // Load constants
+    adrp x11, AMP_const@PAGE
+    add  x11, x11, AMP_const@PAGEOFF
+    ldr  s15, [x11]              // AMP
+
+    adrp x12, floats_inv24_two_one@PAGE
+    add  x12, x12, floats_inv24_two_one@PAGEOFF
+    ldr  s12, [x12]              // inv24
+    ldr  s13, [x12, #4]          // 2.0
+    ldr  s14, [x12, #8]          // 1.0
+
+    adrp x13, rng64_consts@PAGE
+    add  x13, x13, rng64_consts@PAGEOFF
+
+    mov w22, wzr                 // loop counter i
+
+// ------------------------------------------------------------
+Lloop:
+    // Break conditions: i>=n  OR  pos>=len
+    cmp w22, w3
+    b.ge Lend
+    cmp w8, w9
+    b.ge Lend
+
+    // env *= env_coef
+    fmul s4, s4, s5
+
+    // --- SplitMix64 ---
+    ldr x14, [x13]         // GAMMA
+    add x10, x10, x14      // state += GAMMA
+
+    mov x15, x10           // z = state copy
+    lsr x16, x15, #30
+    eor x15, x15, x16
+    ldr x16, [x13, #8]     // MUL1
+    mul x15, x15, x16
+
+    lsr x16, x15, #27
+    eor x15, x15, x16
+    ldr x16, [x13, #16]    // MUL2
+    mul x15, x15, x16
+
+    lsr x16, x15, #31
+    eor x15, x15, x16      // final z
+
+    // Convert to float in [-1,1)
+    mov w16, w15           // low 32 bits
+    lsr w16, w16, #8       // 24-bit mantissa
+    ucvtf s0, w16          // to float
+    fmul  s0, s0, s12      // *inv24
+    fmul  s0, s0, s13      // *2
+    fsub  s0, s0, s14      // -1
+
+    // sample = env * noise * AMP
+    fmul s0, s0, s4
+    fmul s0, s0, s15
+
+    // L[i] += sample
+    ldr s1, [x1, w22, sxtw #2]
+    fadd s1, s1, s0
+    str s1, [x1, w22, sxtw #2]
+
+    // R[i] += sample
+    ldr s2, [x2, w22, sxtw #2]
+    fadd s2, s2, s0
+    str s2, [x2, w22, sxtw #2]
+
+    // Advance indices
+    add w8, w8, #1      // pos++
+    add w22, w22, #1    // i++
+    b   Lloop
+
+// ------------------------------------------------------------
+Lend:
+    // Store updated state back to struct
+    str s4,  [x0, #S_ENV]
+    str w8,  [x0, #S_POS]
+    str x10, [x0, #S_RNG_STATE]
+
+Ldone:
+    ldr x22, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret 
+---END---
+
+=== FILE: audio/hat.s ===
+---BEGIN---
+	.text
+	.align 2
+	.globl _hat_process
+
+// Lightweight Hat – fast-decay envelope + white noise (SplitMix64)
+//   void hat_process(hat_t *h, float *L, float *R, uint32_t n)
+//     x0 = hat_t*
+//     x1 = L buffer
+//     x2 = R buffer
+//     w3 = n samples
+//
+// hat_t layout (see hat.h)
+//   uint32_t pos        @ 0
+//   uint32_t len        @ 4
+//   float    sr         @ 8 (unused)
+//   float    env        @ 12
+//   float    env_coef   @ 16
+//   rng_t    rng        @ 24 (state 64-bit)
+
+// --- Struct Offsets ---
+.equ H_POS,        0
+.equ H_LEN,        4
+.equ H_ENV,       12
+.equ H_ENV_COEF,  16
+.equ H_RNG_STATE, 24
+
+// --- Constants ---
+H_AMP_const:
+    .float 0.15                    // hat amplitude
+
+f_inv24_two_one:
+    .float 5.9604644775390625e-8   // 1/2^24
+    .float 2.0
+    .float 1.0
+
+rng64_consts_hat:
+    .quad 0x9E3779B97F4A7C15       // GAMMA
+    .quad 0xBF58476D1CE4E5B9       // MUL1
+    .quad 0x94D049BB133111EB       // MUL2
+
+// ------------------------------------------------------------
+_hat_process:
+    // Prologue: minimal stack frame
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    // Preserve callee-saved x22
+    str x22, [sp, #-16]!
+
+    // Early exits
+    ldr w8, [x0, #H_POS]
+    ldr w9, [x0, #H_LEN]
+    cmp w8, w9
+    b.ge Ldone          // inactive
+    cbz w3, Ldone       // n == 0
+
+    // Load state
+    ldr s4,  [x0, #H_ENV]
+    ldr s5,  [x0, #H_ENV_COEF]
+    ldr x10, [x0, #H_RNG_STATE]
+
+    // Constants
+    adrp x11, H_AMP_const@PAGE
+    add  x11, x11, H_AMP_const@PAGEOFF
+    ldr  s15, [x11]              // AMP
+
+    adrp x12, f_inv24_two_one@PAGE
+    add  x12, x12, f_inv24_two_one@PAGEOFF
+    ldr  s12, [x12]
+    ldr  s13, [x12, #4]
+    ldr  s14, [x12, #8]
+
+    adrp x13, rng64_consts_hat@PAGE
+    add  x13, x13, rng64_consts_hat@PAGEOFF
+
+    mov w22, wzr                 // loop counter i
+
+// --- Main Loop ---
+Lloop:
+    cmp w22, w3
+    b.ge Lend
+    cmp w8, w9
+    b.ge Lend
+
+    // env *= env_coef
+    fmul s4, s4, s5
+
+    // SplitMix64
+    ldr x14, [x13]         // GAMMA
+    add x10, x10, x14
+    mov x15, x10
+    lsr x16, x15, #30
+    eor x15, x15, x16
+    ldr x16, [x13, #8]     // MUL1
+    mul x15, x15, x16
+    lsr x16, x15, #27
+    eor x15, x15, x16
+    ldr x16, [x13, #16]    // MUL2
+    mul x15, x15, x16
+    lsr x16, x15, #31
+    eor x15, x15, x16
+
+    mov w16, w15
+    lsr w16, w16, #8
+    ucvtf s0, w16
+    fmul  s0, s0, s12
+    fmul  s0, s0, s13
+    fsub  s0, s0, s14
+
+    // sample = env*noise*AMP
+    fmul s0, s0, s4
+    fmul s0, s0, s15
+
+    // L[i] += sample
+    ldr s1, [x1, w22, sxtw #2]
+    fadd s1, s1, s0
+    str s1, [x1, w22, sxtw #2]
+
+    // R[i] += sample
+    ldr s2, [x2, w22, sxtw #2]
+    fadd s2, s2, s0
+    str s2, [x2, w22, sxtw #2]
+
+    // Advance
+    add w8, w8, #1
+    add w22, w22, #1
+    b   Lloop
+
+// --- Exit ---
+Lend:
+    str s4,  [x0, #H_ENV]
+    str w8,  [x0, #H_POS]
+    str x10, [x0, #H_RNG_STATE]
+
+Ldone:
+    ldr x22, [sp], #16
+    ldp x29, x30, [sp], #16
+    ret 
+---END---
+
+=== FILE: audio/melody.s ===
+---BEGIN---
+	.text
+	.align 2
+	.globl _melody_process
+
+// Simplified melody implementation avoiding libm calls
+// Uses polynomial approximation for exponential decay
+melody_constants:
+    .float 6.2831853071795864769      // [0] TAU
+    .float 5.0                        // [4] DECAY_RATE  
+    .float 0.07                       // [8] AMP
+    .float 2.0                        // [12] TWO
+    .float 1.0                        // [16] ONE
+    .float 1.2                        // [20] DRIVE_GAIN
+    .float 1.5                        // [24] SOFT_A
+    .float 0.5                        // [28] SOFT_B
+
+_melody_process:
+    // Prologue - simpler frame
+    stp x29, x30, [sp, #-80]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+
+    // Save arguments
+    mov x19, x0      // melody*
+    mov x23, x1      // L*
+    mov x24, x2      // R*
+    mov w22, w3      // n
+
+    // Load melody struct members
+    ldr s0, [x19]        // phase
+    ldr w20, [x19, #4]   // pos
+    ldr w21, [x19, #8]   // len
+    ldr s1, [x19, #12]   // sr
+    ldr s2, [x19, #16]   // freq
+
+    // Early exit checks
+    cmp w20, w21
+    b.ge Ldone
+    cbz w22, Ldone
+
+    // Load constants
+    adrp x4, melody_constants@PAGE
+    add  x4, x4, melody_constants@PAGEOFF
+    ldr  s10, [x4]       // TAU
+    ldr  s11, [x4, #4]   // DECAY_RATE
+    ldr  s12, [x4, #8]   // AMP
+    ldr  s13, [x4, #12]  // TWO
+    ldr  s14, [x4, #16]  // ONE
+    ldr  s15, [x4, #20]  // DRIVE_GAIN
+    ldr  s16, [x4, #24]  // SOFT_A
+    ldr  s17, [x4, #28]  // SOFT_B
+
+    // Calculate phase increment: TAU * freq / sr
+    fmul s3, s10, s2     // TAU * freq
+    fdiv s3, s3, s1      // / sr -> phase_inc in s3
+
+    mov w4, wzr          // loop counter i
+
+Lloop:
+    // Loop bounds check
+    cmp w4, w22
+    b.ge Lend
+    cmp w20, w21
+    b.ge Lend
+
+    // Calculate time: t = pos / sr
+    ucvtf s4, w20
+    fdiv s4, s4, s1      // t in s4
+
+    // Simple exponential decay approximation: env = 1.0 / (1.0 + decay_rate * t)
+    fmul s5, s11, s4     // decay_rate * t
+    fadd s5, s14, s5     // 1.0 + decay_rate * t
+    fdiv s5, s14, s5     // env = 1.0 / (1.0 + decay_rate * t)
+
+    // Calculate sawtooth: frac = phase / TAU
+    fdiv s6, s0, s10     // frac
+
+    // raw = 2*frac - 1
+    fmul s7, s6, s13     // 2*frac
+    fsub s7, s7, s14     // -1 -> raw sawtooth
+
+    // Apply drive: driven = 1.2 * raw
+    fmul s8, s15, s7     // driven
+
+    // Soft clipping: soft = 1.5*driven - 0.5*driven^3
+    fmul s9, s8, s8      // driven^2
+    fmul s9, s9, s8      // driven^3
+    fmul s18, s16, s8    // 1.5*driven
+    fmul s19, s17, s9    // 0.5*driven^3
+    fsub s18, s18, s19   // soft = 1.5*driven - 0.5*driven^3
+
+    // Final sample: sample = soft * env * amp
+    fmul s18, s18, s5    // * env
+    fmul s18, s18, s12   // * amp
+
+    // Add to L[i] and R[i]
+    ldr s19, [x23, w4, sxtw #2]
+    fadd s19, s19, s18
+    str s19, [x23, w4, sxtw #2]
+
+    ldr s19, [x24, w4, sxtw #2]
+    fadd s19, s19, s18
+    str s19, [x24, w4, sxtw #2]
+
+    // Update counters and phase
+    add w4, w4, #1       // i++
+    add w20, w20, #1     // pos++
+    fadd s0, s0, s3      // phase += phase_inc
+
+    // Wrap phase properly in both directions
+    fcmp s0, s10
+    b.lt .check_negative_wrap
+    fsub s0, s0, s10     // phase -= TAU if phase >= TAU
+    b Lloop
+
+.check_negative_wrap:
+    fmov s16, wzr        // 0.0
+    fcmp s0, s16
+    b.ge Lloop
+    fadd s0, s0, s10     // phase += TAU if phase < 0
+    b Lloop
+
+Lend:
+    // Store back state
+    str s0, [x19]        // phase
+    str w20, [x19, #4]   // pos
+
+Ldone:
+    // Epilogue
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #80
+    ret
+
+---END---
+
+=== FILE: audio/delay.s ===
+---BEGIN---
+.text
+.align 2
+.globl _delay_process_block
+
+// -----------------------------------------------------------------------------
+// void delay_process_block(delay_t *d, float *L, float *R, uint32_t n, float feedback)
+//    x0 = delay_t* { float *buf; uint32_t size; uint32_t idx; }
+//    x1 = L buffer
+//    x2 = R buffer
+//    w3 = n samples
+//    s0 = feedback amount
+// Stereo ping-pong delay: L feeds R, R feeds L
+// -----------------------------------------------------------------------------
+_delay_process_block:
+    // Prologue – use 512-byte frame; save x27/x28 at offset #480 (512-64) giving
+    // the maximum distance LLDP allows (>=480 <=504) to avoid overlapping caller
+    // memory even in fast execution.
+    stp x29, x30, [sp, #-512]!
+    stp q8,  q9,  [sp, #112]
+    stp q10, q11, [sp, #144]
+    stp q12, q13, [sp, #176]
+    stp q14, q15, [sp, #208]
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #480]
+
+    // Load struct members (buf,size,idx) into convenient regs
+    ldr x4, [x0]       // buf*
+    ldr w5, [x0, #8]   // size
+    ldr w6, [x0, #12]  // idx
+
+    // Early-out if n==0
+    cbz w3, Ldone
+
+    // --- PRE-WRAP BUG FIX ----------------------------------------------------
+    // Make absolutely sure idx is in range BEFORE first buffer access.
+    cmp w6, w5          // idx >= size ?
+    csel w6, wzr, w6, hs// if so wrap to 0
+    // ------------------------------------------------------------------------
+
+    mov w7, wzr        // loop counter i
+
+Lloop:
+    // Break conditions
+    cmp w7, w3
+    b.hs Lstore_idx     // i >= n → exit loop
+
+    // Calculate &buf[idx*2]
+    // (each sample is float = 4 bytes, stereo interleaved)
+    // addr = buf + idx*8
+    lsl w8, w6, #3      // w8 = idx*8
+    add x9, x4, x8      // x9 = &buf[idx*2]
+
+    // Load delayed samples
+    ldp s1, s2, [x9]    // s1 = yl, s2 = yr
+
+    // Load input samples (post-increment L/R ptrs)
+    ldr s3, [x1]        // L[i]
+    ldr s4, [x2]        // R[i]
+
+    // buf[idx*2]   = L + yr*feedback
+    fmadd s5, s2, s0, s3
+    // buf[idx*2+1] = R + yl*feedback
+    fmadd s6, s1, s0, s4
+    stp  s5, s6, [x9]
+
+    // Add delayed signal to dry samples
+    fadd s3, s3, s1     // L[i] = dryL + yl
+    fadd s4, s4, s2     // R[i] = dryR + yr
+    str  s3, [x1], #4   // write & advance L*
+    str  s4, [x2], #4   // write & advance R*
+
+    // Increment and wrap idx
+    add w6, w6, #1
+    cmp w6, w5
+    csel w6, wzr, w6, hs
+
+    // Next sample
+    add w7, w7, #1
+    b    Lloop
+
+Lstore_idx:
+    // Store updated idx back to struct
+    str w6, [x0, #12]
+
+Ldone:
+    // Epilogue – mirror prologue order
+    ldp x27, x28, [sp, #480]
+    ldp q14, q15, [sp, #208]
+    ldp q12, q13, [sp, #176]
+    ldp q10, q11, [sp, #144]
+    ldp q8,  q9,  [sp, #112]
+    ldp x29, x30, [sp]
+    add sp, sp, #512
+    ret
+---END---
+
+=== FILE: audio/limiter.s ===
+---BEGIN---
+// AArch64 assembly implementation of soft-knee limiter
+// void limiter_process(limiter_t *l, float *L, float *R, uint32_t n)
+//   l: x0 = pointer to limiter_t { attack_coeff, release_coeff, envelope, threshold, knee_width }
+//   L: x1 = left channel buffer
+//   R: x2 = right channel buffer
+//   n: w3 = number of samples
+//
+// Uses soft-knee compression with envelope follower
+
+	.text
+	.align 2
+	.globl _limiter_process
+
+limiter_consts:
+	.float 20.0
+	.float 2.0
+	.float 10.0
+	.float -0.5
+	.float 1.0
+
+_limiter_process:
+	// Save registers we'll use
+	stp x29, x30, [sp, #-96]!
+	stp x19, x20, [sp, #16]
+	stp x21, x22, [sp, #32]
+	mov x29, sp
+	
+	// Early exit if n == 0
+	cbz w3, done
+	
+	// Save arguments
+	mov x19, x0              // limiter struct
+	mov x20, x1              // L pointer
+	mov x21, x2              // R pointer
+	mov w22, w3              // n
+	
+	// Load limiter parameters
+	ldr s0, [x19]            // attack_coeff
+	ldr s1, [x19, #4]        // release_coeff
+	ldr s2, [x19, #8]        // envelope
+	ldr s3, [x19, #12]       // threshold
+	ldr s4, [x19, #16]       // knee_width
+	
+	// Store parameters on stack for reloading after function calls
+	str s0, [sp, #48]        // attack_coeff
+	str s1, [sp, #52]        // release_coeff
+	str s3, [sp, #56]        // threshold
+	str s4, [sp, #60]        // knee_width
+	str s2, [sp, #64]        // envelope (will be updated)
+	
+	// Calculate knee bounds and store
+	fmov s5, #-0.5
+	fmul s5, s4, s5          // -knee_width/2
+	str s5, [sp, #68]
+	fneg s6, s5              // knee_width/2
+	str s6, [sp, #72]
+	
+	// Main loop
+	mov w23, wzr             // i = 0
+	
+loop:
+	// Break conditions
+	cmp w23, w22
+	b.hs Lstore_env     // i >= n → exit loop
+	
+	// Load samples
+	ldr s7, [x20, w23, sxtw #2]   // L[i]
+	ldr s8, [x21, w23, sxtw #2]   // R[i]
+	
+	// Get absolute values and peak
+	fabs s9, s7              // |L[i]|
+	fabs s10, s8             // |R[i]|
+	fmax s11, s9, s10        // peak = max(|L|, |R|)
+	
+	// Load current envelope
+	ldr s2, [sp, #64]
+	
+	// Envelope follower
+	fcmp s11, s2
+	b.le 1f
+	
+	// Attack: env = peak + att * (env - peak)
+	ldr s0, [sp, #48]        // attack_coeff
+	fsub s12, s2, s11
+	fmadd s2, s0, s12, s11
+	b 2f
+	
+1:	// Release: env = peak + rel * (env - peak)
+	ldr s1, [sp, #52]        // release_coeff
+	fsub s12, s2, s11
+	fmadd s2, s1, s12, s11
+	
+2:	// Store updated envelope
+	str s2, [sp, #64]
+	
+	// Calculate overshoot_db = 20 * log10(env / thresh)
+	ldr s3, [sp, #56]        // threshold
+	fdiv s0, s2, s3          // env / thresh
+	
+	// Save sample values before function call
+	str s7, [sp, #76]        // L[i]
+	str s8, [sp, #80]        // R[i]
+	
+	// Call log10f
+	bl _log10f
+	fmov s12, #20.0
+	fmul s13, s0, s12        // overshoot_db = 20 * log10(...)
+	
+	// Reload samples
+	ldr s7, [sp, #76]
+	ldr s8, [sp, #80]
+	
+	// Calculate gain_reduction_db
+	fmov s14, wzr            // gain_reduction_db = 0
+	
+	ldr s5, [sp, #68]        // -knee_width/2
+	fcmp s13, s5
+	b.le 3f                  // no reduction if below knee
+	
+	ldr s6, [sp, #72]        // knee_width/2
+	fcmp s13, s6
+	b.ge 4f                  // hard limit if above knee
+	
+	// Soft knee calculation
+	fsub s15, s13, s5        // overshoot_db + knee_width/2
+	fmul s15, s15, s15       // square it
+	ldr s4, [sp, #60]        // knee_width
+	fmov s16, #2.0
+	fmul s16, s16, s4        // 2 * knee_width
+	fdiv s14, s15, s16       // gain_reduction_db
+	b 3f
+	
+4:	// Hard limiting
+	fmov s14, s13
+	
+3:	// Convert to linear gain
+	fneg s15, s14            // -gain_reduction_db
+	fmov s16, #20.0
+	fdiv s1, s15, s16        // -gain_reduction_db / 20
+	
+	// Save before powf
+	str s7, [sp, #76]
+	str s8, [sp, #80]
+	
+	// Call powf(10, exponent)
+	fmov s0, #10.0
+	bl _powf
+	fmov s17, s0             // gain
+	
+	// Reload samples
+	ldr s7, [sp, #76]
+	ldr s8, [sp, #80]
+	
+	// Apply gain if < 1.0
+	fmov s18, #1.0
+	fcmp s17, s18
+	b.ge 5f
+	
+	fmul s7, s7, s17
+	fmul s8, s8, s17
+	
+5:	// Store processed samples
+	str s7, [x20, w23, sxtw #2]
+	str s8, [x21, w23, sxtw #2]
+	
+	// Loop control
+	add w23, w23, #1
+	cmp w23, w22
+	b.lo loop
+	
+Lstore_env:
+	// Store final envelope
+	ldr s2, [sp, #64]
+	str s2, [x19, #8]
+	
+	// Fallthrough
+	done:
+	// Restore registers
+	ldp x19, x20, [sp, #16]
+	ldp x21, x22, [sp, #32]
+	ldp x29, x30, [sp], #96
+	ret 
+---END---
+

@@ -1,0 +1,47 @@
+[NOTDEAFBEEF BLOCKCHAIN BUNDLE - BUNDLE_2_VISUAL_CORE]
+=============================================================
+Visual foundation: drawing, colors, ASCII rendering
+Generated for on-chain storage following deafbeef methodology.
+
+[MANIFEST]
+Bundle: bundle_2_visual_core
+Total files: 5
+Files included:
+  - visual/visual_core.s (0 bytes)
+  - visual/drawing.s (0 bytes)
+  - visual/ascii_renderer.s (0 bytes)
+  - visual/particles.s (0 bytes)
+  - visual/glitch_system.s (0 bytes)
+
+Reconstruction: Save each file to its path and build with provided instructions.
+
+=== FILE: visual/visual_core.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/visual_core.s
+
+---END---
+
+=== FILE: visual/drawing.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/drawing.s
+
+---END---
+
+=== FILE: visual/ascii_renderer.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/ascii_renderer.s
+
+---END---
+
+=== FILE: visual/particles.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/particles.s
+
+---END---
+
+=== FILE: visual/glitch_system.s ===
+---BEGIN---
+// FILE NOT FOUND: src/asm/visual/glitch_system.s
+
+---END---
+
